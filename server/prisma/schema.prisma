@@ -1,0 +1,18 @@
+// prisma/schema.prisma
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model TokenLookup {
+  id        Int      @id @default(autoincrement())
+  token     String
+  score     Int
+  risk      String
+  outlook   String
+  createdAt DateTime @default(now())
+}
