@@ -3,7 +3,8 @@ import express from "express";
 import cors from "cors";
 import { z } from "zod";
 import { prisma } from "./db/prisma";
-import { analyzeTokenMock } from "./lib/scoring/mockScoring";
+import { analyzeToken } from "./lib/scoring/scoring";
+import { enqueueAnalyze } from "./jobs/queue";
 
 const app = express();
 const port = 3000;
@@ -29,8 +30,8 @@ app.get("/analyze", async (req, res) => {
 
   const token = String(parsed.data.token).trim();
 
-  // Use mock scoring engine
-  const result = analyzeTokenMock(token);
+  // Use new scoring engine (async)
+  const result = await analyzeToken(token);
 
   // Save to DB (recent searches)
   try {
@@ -57,6 +58,19 @@ app.get("/recent", async (_req, res) => {
     orderBy: { createdAt: "desc" },
   });
   return res.json(rows);
+});
+
+// POST /jobs/analyze { token }
+app.post("/jobs/analyze", async (req, res) => {
+  const token = String(req.body?.token || "").trim();
+  if (!token) return res.status(400).json({ error: "token is required" });
+  try {
+    const job = await enqueueAnalyze(token);
+    return res.json({ jobId: job.id });
+  } catch (e: any) {
+    console.error("enqueue error:", e);
+    return res.status(500).json({ error: "failed to enqueue" });
+  }
 });
 
 app.listen(port, () => {
