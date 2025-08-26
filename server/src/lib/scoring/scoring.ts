@@ -2,6 +2,7 @@
 import { getMarketSnapshot } from "../../providers";
 import { analyzeTokenMock } from "./mockScoring";
 import { minmax, clamp, bucketLabel01 } from "../normalize";
+import { getContractMeta } from "../../providers/etherscan/contract";
 
 export type AnalysisResult = {
   token: string;
@@ -19,49 +20,70 @@ function riskFromScore(score: number): AnalysisResult["risk"] {
 
 export async function analyzeToken(input: string): Promise<AnalysisResult> {
   const token = input.trim();
-  const base = analyzeTokenMock(token); // deterministic heuristic
+  const base = analyzeTokenMock(token); // heuristic stays as a foundation
 
-  // Try live market data; if it fails, return heuristic + note
+  // ----- MARKET (CoinGecko) -----
   const market = await getMarketSnapshot(token).catch(() => null);
-  if (!market) {
-    return {
-      ...base,
-      evidence: [
-        ...base.evidence,
-        "Market: live data unavailable; used heuristic only (MVP fallback).",
-      ],
-    };
+
+  let evidence = [...base.evidence];
+  let blended = base.score;
+  let outlook: AnalysisResult["outlook"] = base.outlook;
+
+  if (market) {
+    const volNorm = minmax(market.volume24h, 1e6, 1e9);
+    const momNorm = minmax(market.d7Pct, -30, 30);
+    const marketSub = Math.round((0.6 * volNorm + 0.4 * momNorm) * 100);
+    blended = Math.round(clamp(0.7 * blended + 0.3 * marketSub, 0, 100));
+
+    outlook = "Neutral";
+    if (market.d1Pct >= 3) outlook = "Bullish";
+    else if (market.d1Pct <= -3) outlook = "Bearish";
+
+    evidence.push(
+      `Market: 24h ${market.d1Pct.toFixed(2)}%; 7d ${market.d7Pct.toFixed(2)}%.`,
+      `Volume: $${Intl.NumberFormat("en-US", { notation: "compact" }).format(market.volume24h)} (${bucketLabel01(volNorm)} vs peers).`,
+      `Source: CoinGecko.`
+    );
+  } else {
+    evidence.push("Market: live data unavailable; used heuristic only (fallback).");
   }
 
-  // Normalize market signals
-  // NOTE: these ranges are heuristic; we'll refine later.
-  const volNorm = minmax(market.volume24h, 1e6, 1e9);   // $1M .. $1B
-  const momNorm = minmax(market.d7Pct, -30, 30);        // -30% .. +30%
+  // ----- ETHERSCAN (only if input looks like an address) -----
+  const isAddress = token.toLowerCase().startsWith("0x") && token.length >= 8;
+  if (isAddress) {
+    const meta = await getContractMeta(token).catch(() => null);
+    if (meta) {
+      if (meta.verified) {
+        blended = Math.min(100, blended + 6); // small trust bump
+        evidence.push(`On-chain: Contract is verified on Etherscan (compiler ${meta.compilerVersion ?? "unknown"}, license ${meta.licenseType ?? "n/a"}).`);
+      } else {
+        blended = Math.max(0, blended - 12); // stronger penalty
+        evidence.push("On-chain: Contract source NOT verified on Etherscan (risk ↑).");
+      }
 
-  // Market sub-score (0..100)
-  const marketSub = Math.round((0.6 * volNorm + 0.4 * momNorm) * 100);
+      if (meta.proxy) {
+        evidence.push(`On-chain: Contract is a PROXY${meta.implementation ? ` (implementation ${meta.implementation})` : ""}.`);
+      }
 
-  // Blend with base heuristic (weights adjustable)
-  const blended = Math.round(clamp(0.7 * base.score + 0.3 * marketSub, 0, 100));
+    } else {
+      evidence.push("On-chain: Etherscan metadata unavailable (no change applied).");
+    }
+  } else {
+    evidence.push("On-chain: Skipped (symbol provided, not a contract address).");
+  }
 
-  // Outlook from short momentum
-  let outlook: AnalysisResult["outlook"] = "Neutral";
-  if (market.d1Pct >= 3) outlook = "Bullish";
-  else if (market.d1Pct <= -3) outlook = "Bearish";
-
-  const evidence = [
-    ...base.evidence,
-    `Market: 24h change ${market.d1Pct.toFixed(2)}%; 7d ${market.d7Pct.toFixed(2)}%.`,
-    `Volume: $${Intl.NumberFormat("en-US", { notation: "compact" }).format(market.volume24h)} (${bucketLabel01(volNorm)} vs peers).`,
-    `Source: CoinGecko (${market.source}).`,
-  ];
+  const risk = ((): AnalysisResult["risk"] => {
+    if (blended >= 70) return "Low";
+    if (blended >= 40) return "Medium";
+    return "High";
+  })();
 
   return {
     token: base.token,
     score: blended,
-    risk: riskFromScore(blended),
+    risk,
     outlook,
-    evidence,
+    evidence
   };
 }
 
