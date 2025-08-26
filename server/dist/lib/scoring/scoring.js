@@ -6,6 +6,7 @@ const providers_1 = require("../../providers");
 const mockScoring_1 = require("./mockScoring");
 const normalize_1 = require("../normalize");
 const contract_1 = require("../../providers/etherscan/contract");
+const pairs_1 = require("../../providers/dexscreener/pairs");
 function riskFromScore(score) {
     if (score >= 70)
         return "Low";
@@ -59,6 +60,28 @@ async function analyzeToken(input) {
     }
     else {
         evidence.push("On-chain: Skipped (symbol provided, not a contract address).");
+    }
+    // ----- DEXSCREENER (if address) -----
+    if (isAddress) {
+        const pairs = await (0, pairs_1.getDexPairs)(token).catch(() => null);
+        if (pairs && pairs.length > 0) {
+            const sorted = pairs.sort((a, b) => (b.liquidity.usd ?? 0) - (a.liquidity.usd ?? 0));
+            const top = sorted[0];
+            if (top) {
+                const liq = top.liquidity.usd ?? 0;
+                const vol = top.volume.h24 ?? 0;
+                const liqNorm = (0, normalize_1.minmax)(liq, 5e4, 5e7); // $50k .. $50M
+                const volNorm = (0, normalize_1.minmax)(vol, 1e4, 1e7); // $10k .. $10M
+                const dexSub = Math.round((0.5 * liqNorm + 0.5 * volNorm) * 100);
+                blended = Math.round((0, normalize_1.clamp)(0.8 * blended + 0.2 * dexSub, 0, 100));
+                evidence.push(`DEX: Liquidity ~$${Intl.NumberFormat("en-US", { notation: "compact" }).format(liq)}, 24h volume ~$${Intl.NumberFormat("en-US", { notation: "compact" }).format(vol)}.`);
+                evidence.push(`Source: DexScreener (${top.dexId}, ${top.chainId}).`);
+            }
+        }
+        else {
+            evidence.push("DEX: No liquidity found on DexScreener (cannot trade?).");
+            blended = Math.max(0, blended - 15);
+        }
     }
     const risk = (() => {
         if (blended >= 70)

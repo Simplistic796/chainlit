@@ -2,6 +2,8 @@
 import { getMarketSnapshot } from "../../providers";
 import { analyzeTokenMock } from "./mockScoring";
 import { minmax, clamp, bucketLabel01 } from "../normalize";
+import { getDexPairs } from "../../providers/dexscreener/pairs";
+import { getContractMeta } from "../../providers/etherscan/contract";
 
 export type AnalysisResult = {
   token: string;
@@ -19,9 +21,9 @@ function riskFromScore(score: number): AnalysisResult["risk"] {
 
 export async function analyzeToken(input: string): Promise<AnalysisResult> {
   const token = input.trim();
-  const base = analyzeTokenMock(token); // deterministic heuristic
+  const base = analyzeTokenMock(token); // heuristic stays as a foundation
 
-  // Try live market data; if it fails, return heuristic + note
+  // ----- MARKET (CoinGecko) -----
   const market = await getMarketSnapshot(token).catch(() => null);
   if (!market) {
     return {
