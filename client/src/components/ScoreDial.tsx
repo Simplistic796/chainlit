@@ -1,4 +1,4 @@
-type ScoreDialProps = {
+export type ScoreDialProps = {
   score: number;
   size?: "sm" | "md" | "lg";
   className?: string;

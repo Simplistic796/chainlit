@@ -7,7 +7,7 @@ import { Badge } from "./components/ui/badge";
 import { Separator } from "./components/ui/separator";
 import AppToaster from "./components/AppToaster";
 import { useToast } from "./components/ui/use-toast";
-import ScoreDial from "./components/ScoreDial";
+import ScoreDial from "@/components/ScoreDial";
 
 type AnalysisResult = {
   token: string;
@@ -43,7 +43,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [recent, setRecent] = useState<RecentRow[]>([]);
   const [loadingRecent, setLoadingRecent] = useState(false);
-  const [showAboutScore, setShowAboutScore] = useState(false);
+  
   const [consensus, setConsensus] = useState<ConsensusRow | null>(null);
   const [debating, setDebating] = useState(false);
 
@@ -168,8 +168,8 @@ export default function App() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-6 md:grid-cols-2 items-center">
-                <div className="flex justify-center md:justify-start">
-                  <ScoreDial score={result.score} label="Score" />
+                <div className="flex w-full justify-center">
+                  <ScoreDial score={result.score} size="lg" className="mx-auto md:mx-0" />
                 </div>
 
                 <div className="space-y-3">
