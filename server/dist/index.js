@@ -15,7 +15,7 @@ const queue_1 = require("./jobs/queue");
 const redis_1 = require("./cache/redis");
 const queue_2 = require("./jobs/consensus/queue");
 const app = (0, express_1.default)();
-const port = 3000;
+const port = Number(process.env.PORT || 3000);
 app.use((0, cors_1.default)());
 app.use((0, helmet_1.default)());
 app.set("trust proxy", 1);
