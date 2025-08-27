@@ -143,6 +143,25 @@ app.get("/consensus/:token", async (req: Request, res: Response) => {
   return res.json(row);
 });
 
+// Get recent agent opinions for a token (last 12 by default)
+app.get("/consensus/:token/opinions", async (req: Request, res: Response) => {
+  const token = String(req.params.token).trim();
+  const limit = Number(req.query.limit ?? 12);
+  const rows = await prisma.agentRun.findMany({
+    where: { token },
+    orderBy: { createdAt: "desc" },
+    take: Math.max(3, Math.min(30, limit)),
+  });
+  // Map to a clean shape
+  const opinions = rows.map(r => ({
+    id: r.id,
+    agentType: r.agentType,
+    output: r.outputJSON,      // { agent, stance, confidence, rationale, features }
+    createdAt: r.createdAt,
+  }));
+  res.json({ token, opinions });
+});
+
 // Sentry error handler AFTER routes (only if Sentry is available)
 if (process.env.SENTRY_DSN) {
   app.use((Sentry as any).Handlers.errorHandler() as ErrorRequestHandler);

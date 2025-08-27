@@ -8,6 +8,7 @@ import { Separator } from "./components/ui/separator";
 import AppToaster from "./components/AppToaster";
 import { useToast } from "./components/ui/use-toast";
 import ScoreDial from "@/components/ScoreDial";
+import AgentChip from "@/components/AgentChip";
 
 type AnalysisResult = {
   token: string;
@@ -34,6 +35,13 @@ type ConsensusRow = {
   createdAt: string;
 };
 
+type AgentOpinionDTO = {
+  id: number;
+  agentType: "sentiment" | "valuation" | "risk" | string;
+  output: { agent: string; stance: "BUY"|"HOLD"|"SELL"|string; confidence: number; rationale: string };
+  createdAt: string;
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:3000";
 
 export default function App() {
@@ -46,6 +54,7 @@ export default function App() {
   
   const [consensus, setConsensus] = useState<ConsensusRow | null>(null);
   const [debating, setDebating] = useState(false);
+  const [opinions, setOpinions] = useState<AgentOpinionDTO[]>([]);
 
   const fetchRecent = async () => {
     try {
@@ -56,6 +65,15 @@ export default function App() {
       setLoadingRecent(false);
     }
   };
+
+  async function fetchOpinions(tok: string) {
+    try {
+      const res = await axios.get<{ token: string; opinions: AgentOpinionDTO[] }>(`${API_BASE}/consensus/${encodeURIComponent(tok)}/opinions`, { params: { limit: 9 } });
+      setOpinions(res.data.opinions);
+    } catch {
+      setOpinions([]);
+    }
+  }
 
   useEffect(() => { fetchRecent(); }, []);
 
@@ -103,6 +121,7 @@ export default function App() {
           if (res.data && res.data.token.toLowerCase() === q.toLowerCase()) {
             setConsensus(res.data);
             setDebating(false);
+            fetchOpinions(q);            // ← add this line
             return;
           }
         } catch {}
@@ -222,6 +241,16 @@ export default function App() {
               <ul className="list-disc pl-6 space-y-1">
                 {consensus.rationaleJSON.map((r, i) => <li key={i}>{r}</li>)}
               </ul>
+              {opinions.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  <div className="text-sm font-medium text-muted-foreground">Agent opinions</div>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    {opinions.slice(0,3).map((op) => (
+                      <AgentChip key={op.id} agent={op.agentType} stance={op.output.stance} confidence={op.output.confidence} />
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="text-xs text-muted-foreground mt-2">
                 Created: {new Date(consensus.createdAt).toLocaleString()}
               </div>
