@@ -58,3 +58,29 @@ model BacktestRun {
 
   @@index([createdAt])
 }
+
+model ApiKey {
+  id           Int       @id @default(autoincrement())
+  name         String
+  keyHash      String    // hash of the API key
+  plan         String    // "free" | "pro" | "enterprise"
+  requestsPerMin Int     @default(60)
+  requestsPerDay Int     @default(5000)
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  usages       ApiUsage[]
+}
+
+model ApiUsage {
+  id         Int      @id @default(autoincrement())
+  apiKeyId   Int
+  endpoint   String
+  status     Int
+  createdAt  DateTime @default(now())
+
+  apiKey     ApiKey   @relation(fields: [apiKeyId], references: [id])
+
+  @@index([apiKeyId, createdAt])
+}

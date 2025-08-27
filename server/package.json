@@ -9,7 +9,8 @@
     "start": "node dist/index.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev --name init",
-    "migrate:deploy": "prisma migrate deploy"
+    "migrate:deploy": "prisma migrate deploy",
+    "key:create": "ts-node scripts/create-key.ts"
   },
   "keywords": [],
   "author": "",
@@ -25,6 +26,7 @@
     "express-rate-limit": "^8.0.1",
     "helmet": "^8.1.0",
     "ioredis": "^5.7.0",
+    "lru-cache": "^11.1.0",
     "pino": "^9.9.0",
     "pino-http": "^10.5.0",
     "pino-pretty": "^13.1.1",

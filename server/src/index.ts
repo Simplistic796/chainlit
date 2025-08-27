@@ -14,6 +14,7 @@ import { logger } from "./observability/logger";
 import { initSentry, Sentry } from "./observability/sentry";
 import pinoHttp from "pino-http";
 import { v4 as uuidv4 } from "uuid";
+import { apiAuth, logApiUsage, ok, fail } from "./api/mw";
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -135,7 +136,7 @@ app.post("/debate", async (req: Request, res: Response) => {
 // fetch last consensus for a token
 app.get("/consensus/:token", async (req: Request, res: Response) => {
   const token = String(req.params.token);
-  const row = await prisma.consensusRun.findFirst({
+  const row = await (prisma as any).consensusRun.findFirst({
     where: { token },
     orderBy: { createdAt: "desc" },
   });
@@ -147,13 +148,13 @@ app.get("/consensus/:token", async (req: Request, res: Response) => {
 app.get("/consensus/:token/opinions", async (req: Request, res: Response) => {
   const token = String(req.params.token).trim();
   const limit = Number(req.query.limit ?? 12);
-  const rows = await prisma.agentRun.findMany({
+  const rows = await (prisma as any).agentRun.findMany({
     where: { token },
     orderBy: { createdAt: "desc" },
     take: Math.max(3, Math.min(30, limit)),
   });
   // Map to a clean shape
-  const opinions = rows.map(r => ({
+  const opinions = rows.map((r: any) => ({
     id: r.id,
     agentType: r.agentType,
     output: r.outputJSON,      // { agent, stance, confidence, rationale, features }
@@ -161,6 +162,87 @@ app.get("/consensus/:token/opinions", async (req: Request, res: Response) => {
   }));
   res.json({ token, opinions });
 });
+
+// V1 API Routes (secured with API keys)
+const v1 = express.Router();
+
+// secure all v1 endpoints
+v1.use(apiAuth, logApiUsage);
+
+// GET /v1/health (authed variant)
+v1.get("/health", (req, res) => ok(res, { status: "ok" }));
+
+// /v1/analyze?token=...
+v1.get("/analyze", async (req, res) => {
+  const token = String(req.query.token || "").trim();
+  if (!token) return fail(res, 400, "token_required");
+  try {
+    // reuse your smart /analyze logic functionally or inline call analyzeToken
+    const result = await analyzeToken(token);
+    return ok(res, result);
+  } catch (e: any) {
+    return fail(res, 500, "analysis_failed");
+  }
+});
+
+// POST /v1/debate { token, rounds? }
+v1.post("/debate", async (req, res) => {
+  const token = String(req.body?.token || "").trim();
+  const rounds = Number(req.body?.rounds || 3);
+  if (!token) return fail(res, 400, "token_required");
+  try {
+    const { enqueueDebate, debateEvents } = await import("./jobs/consensus/queue");
+    const job = await enqueueDebate({ token, context: {} });
+    const result = debateEvents ? await job.waitUntilFinished(debateEvents, 8000).catch(() => null) : null;
+    return ok(res, result ?? { enqueued: true, jobId: job.id });
+  } catch {
+    return fail(res, 500, "debate_failed");
+  }
+});
+
+// GET /v1/consensus/:token
+v1.get("/consensus/:token", async (req, res) => {
+  const token = String(req.params.token || "");
+  const row = await (prisma as any).consensusRun.findFirst({ where: { token }, orderBy: { createdAt: "desc" } });
+  if (!row) return fail(res, 404, "consensus_not_found");
+  return ok(res, row);
+});
+
+// GET /v1/consensus/:token/opinions
+v1.get("/consensus/:token/opinions", async (req, res) => {
+  const token = String(req.params.token || "");
+  const limit = Number(req.query.limit || 12);
+  const rows = await (prisma as any).agentRun.findMany({
+    where: { token },
+    orderBy: { createdAt: "desc" },
+    take: Math.max(3, Math.min(30, limit)),
+  });
+  return ok(res, rows.map((r: any) => ({
+    id: r.id,
+    agentType: r.agentType,
+    output: r.outputJSON,
+    createdAt: r.createdAt,
+  })));
+});
+
+// Minimal docs endpoint
+v1.get("/docs", (req, res) => {
+  return ok(res, {
+    auth: { header: "x-api-key: <YOUR_KEY>" },
+    endpoints: [
+      { method: "GET", path: "/v1/health" },
+      { method: "GET", path: "/v1/analyze?token=ETH" },
+      { method: "POST", path: "/v1/debate", body: { token: "ETH", rounds: 3 } },
+      { method: "GET", path: "/v1/consensus/:token" },
+      { method: "GET", path: "/v1/consensus/:token/opinions?limit=12" },
+    ],
+    responseEnvelope: { ok: "boolean", data: "any (on success)", error: "string (on failure)" },
+    rateLimits: "Per API key; see plan. 429 on exceed.",
+  });
+});
+
+// mount under /v1
+app.use("/v1", v1);
 
 // Sentry error handler AFTER routes (only if Sentry is available)
 if (process.env.SENTRY_DSN) {
