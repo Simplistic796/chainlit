@@ -4,6 +4,12 @@ import { prisma } from "../db/prisma";
 import { getRedisForBullMQ } from "../cache/redis";
 import { analyzeTokenMock } from "../lib/scoring/mockScoring"; // will swap with real scoring later
 
+// Multi-Agent Queue Names (to be implemented):
+// queue:sentiment.analyze
+// queue:valuation.analyze  
+// queue:risk.analyze
+// queue:consensus.debate
+
 const connection = getRedisForBullMQ();
 export type AnalyzeJobData = { token: string };
 

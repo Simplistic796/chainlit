@@ -19,3 +19,42 @@ model TokenLookup {
   @@index([createdAt])
   @@index([token, createdAt])
 }
+
+// Multi-Agent Models (to be implemented):
+model AgentRun {
+  id          Int      @id @default(autoincrement())
+  agentType   String   // sentiment, valuation, risk, consensus
+  token       String
+  inputsJSON  Json     // Agent input data
+  outputJSON  Json     // Agent output data
+  score       Float?
+  confidence  Float
+  createdAt   DateTime @default(now())
+
+  @@index([agentType, token, createdAt])
+}
+
+model ConsensusRun {
+  id            Int      @id @default(autoincrement())
+  token         String
+  decision      String   // BUY, HOLD, SELL
+  confidence    Float
+  rationaleJSON Json     // Array of agent rationales
+  createdAt     DateTime @default(now())
+
+  @@index([token, createdAt])
+}
+
+model BacktestRun {
+  id           Int      @id @default(autoincrement())
+  universe     String   // Trading universe description
+  window       String   // Time window (e.g., "2023-01-01 to 2023-12-31")
+  pnl          Float    // Profit/Loss
+  sharpe       Float?   // Sharpe ratio
+  sortino      Float?   // Sortino ratio
+  maxDrawdown  Float?   // Maximum drawdown
+  detailsJSON  Json     // Detailed backtest results
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+}
