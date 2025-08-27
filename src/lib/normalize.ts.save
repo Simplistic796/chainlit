@@ -11,3 +11,5 @@ export function bucketLabel01(x: number) {
   if (x >= 0.33) return "moderate";
   return "weak";
 }
+
+

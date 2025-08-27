@@ -1,14 +1,21 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
+import { Input } from "./components/ui/input";
+import { Button } from "./components/ui/button";
+import { Badge } from "./components/ui/badge";
+import { Separator } from "./components/ui/separator";
+import AppToaster from "./components/AppToaster";
+import { useToast } from "./components/ui/use-toast";
+import { ScoreDial } from "./components/ScoreDial";
 
 type AnalysisResult = {
   token: string;
   score: number;
-  risk: string;
-  outlook: string;
+  risk: "Low" | "Medium" | "High" | string;
+  outlook: "Bearish" | "Neutral" | "Bullish" | string;
   evidence: string[];
 };
-
 type RecentRow = {
   id: number;
   token: string;
@@ -18,129 +25,165 @@ type RecentRow = {
   createdAt: string;
 };
 
-// Top of file (or near imports)
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:3000";
 
-
 export default function App() {
+  const { toast } = useToast();
   const [token, setToken] = useState("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
   const [recent, setRecent] = useState<RecentRow[]>([]);
   const [loadingRecent, setLoadingRecent] = useState(false);
+  const [showAboutScore, setShowAboutScore] = useState(false);
 
   const fetchRecent = async () => {
     try {
       setLoadingRecent(true);
       const res = await axios.get<RecentRow[]>(`${API_BASE}/recent`);
       setRecent(res.data);
-    } catch (e) {
-      // don’t block UI if recent fails
     } finally {
       setLoadingRecent(false);
     }
   };
 
-  useEffect(() => {
-    fetchRecent();
-  }, []);
+  useEffect(() => { fetchRecent(); }, []);
 
-  const analyze = async (overrideToken?: string) => {
-    const queryToken = (overrideToken ?? token).trim();
-    if (!queryToken) return;
-
-    setLoading(true);
-    setError("");
-    setResult(null);
+  async function analyze(override?: string) {
+    const q = (override ?? token).trim();
+    if (!q) return;
+    setLoading(true); setResult(null);
     try {
-      const res = await axios.get<AnalysisResult>(`${API_BASE}/analyze`, {
-        params: { token: queryToken },
-      });
+      const res = await axios.get<AnalysisResult>(`${API_BASE}/analyze`, { params: { token: q } });
       setResult(res.data);
-      setToken(queryToken);
-      // refresh recent after a successful analysis
+      setToken(q);
       fetchRecent();
-    } catch (err) {
-      setError("Something went wrong. Make sure the backend is running on :3000.");
+      toast({ title: "Analysis complete", description: `Updated analysis for ${q}` });
+    } catch {
+      toast({ title: "Analysis failed", description: "Check server logs or API_BASE." });
     } finally {
       setLoading(false);
     }
-  };
+  }
+
+  function riskVariant(r: string) {
+    if (r === "Low") return "default";
+    if (r === "Medium") return "secondary";
+    return "destructive";
+  }
+
+  function outlookVariant(o: string) {
+    if (o === "Bullish") return "default";
+    if (o === "Neutral") return "secondary";
+    return "destructive";
+  }
 
   return (
-    <div style={{ padding: "2rem", fontFamily: "Inter, system-ui, sans-serif", maxWidth: 900, margin: "0 auto" }}>
-      <h1 style={{ margin: 0 }}>ChainLit MVP</h1>
-      <p style={{ color: "#666", marginTop: 4 }}>Enter a token symbol or address to get an explainable score.</p>
+    <div className="min-h-screen bg-background text-foreground">
+      <AppToaster />
+      <div className="mx-auto max-w-5xl p-6 space-y-6">
+        <header className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold">ChainLit — Crypto Analyst</h1>
+          <div className="text-sm text-muted-foreground">Not financial advice</div>
+        </header>
 
-      <div style={{ display: "flex", gap: "0.5rem", marginTop: "1rem" }}>
-        <input
-          type="text"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          placeholder="e.g., ETH or 0x123..."
-          style={{ padding: "0.6rem 0.8rem", flex: 1, border: "1px solid #ddd", borderRadius: 8 }}
-        />
-        <button
-          onClick={() => analyze()}
-          disabled={!token || loading}
-          style={{ padding: "0.6rem 1rem", borderRadius: 8, border: "1px solid #222", cursor: loading ? "default" : "pointer" }}
-        >
-          {loading ? "Analyzing..." : "Analyze"}
-        </button>
-      </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Analyze a token</CardTitle>
+            <CardDescription>Enter a symbol (e.g., ETH) or contract address (0x...)</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex gap-2">
+              <Input
+                placeholder="ETH or 0x1234..."
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && analyze()}
+              />
+              <Button onClick={() => analyze()} disabled={!token || loading}>
+                {loading ? "Analyzing..." : "Analyze"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
-      {error && <p style={{ color: "#c00", marginTop: "1rem" }}>{error}</p>}
-
-      {result && (
-        <div style={{ marginTop: "1.5rem", padding: "1rem", border: "1px solid #eee", borderRadius: 12 }}>
-          <h2 style={{ marginTop: 0 }}>Result for {result.token}</h2>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1rem" }}>
-            <div><strong>Score</strong><div style={{ fontSize: 24 }}>{result.score}/100</div></div>
-            <div><strong>Risk</strong><div style={{ fontSize: 24 }}>{result.risk}</div></div>
-            <div><strong>Outlook</strong><div style={{ fontSize: 24 }}>{result.outlook}</div></div>
-          </div>
-
-          <h3 style={{ marginTop: "1rem" }}>Evidence</h3>
-          <ul>
-            {result.evidence.map((ev, i) => (
-              <li key={i}>{ev}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div style={{ marginTop: "2rem" }}>
-        <h3 style={{ marginBottom: 8 }}>Recent searches</h3>
-        {loadingRecent && <p>Loading recent…</p>}
-        {!loadingRecent && recent.length === 0 && <p>No recent searches yet — try analyzing a token.</p>}
-        {!loadingRecent && recent.length > 0 && (
-          <div style={{ display: "grid", gap: "0.5rem" }}>
-            {recent.map((row) => (
-              <button
-                key={row.id}
-                onClick={() => analyze(row.token)}
-                style={{
-                  textAlign: "left",
-                  padding: "0.75rem 1rem",
-                  border: "1px solid #eee",
-                  borderRadius: 10,
-                  cursor: "pointer",
-                  background: "#fff"
-                }}
-                title="Click to re-run analysis"
-              >
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <strong>{row.token}</strong>
-                  <span>{new Date(row.createdAt).toLocaleString()}</span>
+        {result && (
+          <Card className="max-w-5xl">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-3 flex-wrap">
+                Result for <span className="font-mono">{result.token}</span>
+                <Badge variant={riskVariant(result.risk)}>Risk: {result.risk}</Badge>
+                <Badge variant={outlookVariant(result.outlook)}>Outlook: {result.outlook}</Badge>
+              </CardTitle>
+              <CardDescription>Explainable score with evidence</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                <div className="flex justify-center">
+                  <ScoreDial score={result.score} />
                 </div>
-                <div style={{ color: "#555", marginTop: 4 }}>
-                  Score <strong>{row.score}</strong> • Risk <strong>{row.risk}</strong> • Outlook <strong>{row.outlook}</strong>
+                <div className="space-y-4">
+                  <div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowAboutScore(!showAboutScore)}
+                      className="text-sm text-muted-foreground hover:text-foreground"
+                    >
+                      ⓘ About the score
+                    </Button>
+                    {showAboutScore && (
+                      <div className="mt-2 p-3 bg-muted/50 rounded-md text-sm text-muted-foreground">
+                        Score blends heuristic + market (CoinGecko), on-chain (Etherscan), liquidity (DexScreener), and holders (Covalent). We normalize signals and apply explainable weights. This is not financial advice.
+                      </div>
+                    )}
+                  </div>
+                  <Separator />
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium text-muted-foreground">Evidence</div>
+                    <ul className="list-disc pl-6 space-y-1">
+                      {result.evidence.map((ev, i) => <li key={i}>{ev}</li>)}
+                    </ul>
+                  </div>
                 </div>
-              </button>
-            ))}
-          </div>
+              </div>
+            </CardContent>
+          </Card>
         )}
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Recent searches</CardTitle>
+            <CardDescription>Click to re-run analysis</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {loadingRecent && <div>Loading…</div>}
+            {!loadingRecent && recent.length === 0 && (
+              <div className="text-muted-foreground">No recent searches yet.</div>
+            )}
+            {!loadingRecent && recent.length > 0 && (
+              <div className="grid gap-2">
+                {recent.map((row) => (
+                  <button
+                    key={row.id}
+                    onClick={() => analyze(row.token)}
+                    className="text-left rounded-md border p-3 hover:bg-accent transition-colors"
+                    title="Click to re-run"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="font-mono font-medium">{row.token}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {new Date(row.createdAt).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      Score <b>{row.score}</b> • Risk <b>{row.risk}</b> • Outlook <b>{row.outlook}</b>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

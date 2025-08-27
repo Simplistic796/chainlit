@@ -1,0 +1,6 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* optional: a nicer default font */
+:root { color-scheme: light dark; }

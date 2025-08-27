@@ -4,6 +4,7 @@ import { analyzeTokenMock } from "./mockScoring";
 import { minmax, clamp, bucketLabel01 } from "../normalize";
 import { getContractMeta } from "../../providers/etherscan/contract";
 import { getDexPairs } from "../../providers/dexscreener/pairs";
+import { getTopHolders } from "../../providers/covalent/holders";
 
 
 
@@ -99,6 +100,30 @@ export async function analyzeToken(input: string): Promise<AnalysisResult> {
     } else {
       evidence.push("DEX: No liquidity found on DexScreener (cannot trade?).");
       blended = Math.max(0, blended - 15);
+    }
+  }
+
+  // ----- HOLDERS (Covalent) -----
+  if (isAddress) {
+    const holders = await getTopHolders(token).catch(() => null);
+    if (holders && holders.length > 0) {
+      const totalTop = holders.reduce((sum, h) => sum + h.balance_quote, 0);
+      const largest = holders[0];
+      const pctTop10 = (totalTop / (market?.marketCap ?? totalTop)) * 100;
+
+      if (pctTop10 > 50) {
+        blended = Math.max(0, blended - 15);
+        evidence.push(`Holders: Top 10 wallets own ~${pctTop10.toFixed(1)}% of supply (centralization risk).`);
+      } else {
+        blended = Math.min(100, blended + 5);
+        evidence.push(`Holders: Top 10 wallets own ~${pctTop10.toFixed(1)}% of supply (healthy spread).`);
+      }
+
+      if (largest) {
+        evidence.push(`Largest wallet holds ~$${Intl.NumberFormat("en-US", { notation: "compact" }).format(largest.balance_quote)} worth.`);
+      }
+    } else {
+      evidence.push("Holders: Covalent data unavailable.");
     }
   }
 

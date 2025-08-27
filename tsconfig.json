@@ -12,7 +12,9 @@
     "noEmit": true,
     "baseUrl": "."
   },
-  "include": [
-    "src/**/*.ts"
+  "files": [],
+  "references": [
+    { "path": "./client" },
+    { "path": "./server" }
   ]
 }

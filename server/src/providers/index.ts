@@ -1,6 +1,7 @@
 // src/providers/index.ts
 import { resolveToCoinId } from "./coingecko/coinsList";
 import { getMarketById, MarketSnapshot } from "./coingecko/market";
+export { getTopHolders } from "./covalent/holders";
 
 export type UnifiedMarket = MarketSnapshot & { source: "coingecko" };
 
