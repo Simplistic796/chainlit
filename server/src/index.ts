@@ -6,7 +6,7 @@ import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { prisma } from "./db/prisma";
 import { analyzeToken } from "./lib/scoring/scoring";
-import { enqueueAnalyze } from "./jobs/queue";
+import { enqueueAnalyze, analyzeEvents } from "./jobs/queue";
 import { cacheGetJSON, getRedis } from "./cache/redis";
 import { enqueueDebate } from "./jobs/consensus/queue";
 
@@ -52,9 +52,9 @@ app.get("/analyze", async (req, res) => {
   // 2) If Redis is available, enqueue a job and wait briefly for it to finish
   try {
     const r = getRedis();
-    if (r) {
+    if (r && analyzeEvents) {
       const job = await enqueueAnalyze(token);
-      const result = await job.waitUntilFinished(r as any, 8000).catch(() => null);
+      const result = await job.waitUntilFinished(analyzeEvents as any, 8000).catch(() => null);
       if (result) return res.json(result);
       const after = await cacheGetJSON<any>(key);
       if (after) return res.json(after);
