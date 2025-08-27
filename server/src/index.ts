@@ -11,10 +11,12 @@ import { enqueueAnalyze, analyzeEvents } from "./jobs/queue";
 import { cacheGetJSON, getRedis } from "./cache/redis";
 import { enqueueDebate } from "./jobs/consensus/queue";
 import { logger } from "./observability/logger";
-import { initSentry, Sentry } from "./observability/sentry";
+import { initSentry } from "./observability/sentry";
+import * as Sentry from "@sentry/node";
 import pinoHttp from "pino-http";
 import { v4 as uuidv4 } from "uuid";
 import { apiAuth, logApiUsage, ok, fail } from "./api/mw";
+import { scheduleDaily, dailyWorker } from "./jobs/backtest/dailySignals";
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -23,10 +25,11 @@ const port = Number(process.env.PORT || 3000);
 initSentry();
 
 // Sentry request/tracing handlers FIRST (only if Sentry is available)
-if (process.env.SENTRY_DSN) {
-  app.use((Sentry as any).Handlers.requestHandler());
-  app.use((Sentry as any).Handlers.tracingHandler());
-}
+// TODO: Fix Sentry v10+ integration
+// if (process.env.SENTRY_DSN) {
+//   app.use(Sentry.requestHandler());
+//   app.use(Sentry.tracingHandler());
+// }
 
 // Request ID + pino logger
 app.use((req: Request, _res: Response, next: NextFunction) => {
@@ -225,6 +228,36 @@ v1.get("/consensus/:token/opinions", async (req, res) => {
   })));
 });
 
+// POST /v1/backtest/run { limit?: number }
+v1.post("/backtest/run", async (req, res) => {
+  const limit = Number(req.body?.limit || 25);
+  const { runOnce } = await import("./jobs/backtest/dailySignals");
+  const job = await runOnce(limit);
+  return ok(res, { enqueued: true, jobId: job.id, limit });
+});
+
+// GET /v1/backtest/signals?date=YYYY-MM-DD&limit=100
+v1.get("/backtest/signals", async (req, res) => {
+  const dateStr = String(req.query.date || "").trim();
+  const limit = Number(req.query.limit || 100);
+  if (!dateStr) return fail(res, 400, "date_required");
+  const dayUTC = new Date(`${dateStr}T00:00:00.000Z`);
+  const rows = await prisma.signalDaily.findMany({
+    where: { date: dayUTC },
+    orderBy: [{ score: "desc" }],
+    take: Math.min(250, Math.max(1, limit)),
+  });
+  return ok(res, rows);
+});
+
+// GET /v1/backtest/summary?days=30
+v1.get("/backtest/summary", async (req, res) => {
+  const days = Number(req.query.days || 30);
+  const { backtestSummary } = await import("./lib/backtest/report");
+  const data = await backtestSummary(Math.max(7, Math.min(120, days)));
+  return ok(res, data);
+});
+
 // Minimal docs endpoint
 v1.get("/docs", (req, res) => {
   return ok(res, {
@@ -245,9 +278,10 @@ v1.get("/docs", (req, res) => {
 app.use("/v1", v1);
 
 // Sentry error handler AFTER routes (only if Sentry is available)
-if (process.env.SENTRY_DSN) {
-  app.use((Sentry as any).Handlers.errorHandler() as ErrorRequestHandler);
-}
+// TODO: Fix Sentry v10+ integration
+// if (process.env.SENTRY_DSN) {
+//   app.use(Sentry.errorHandler() as ErrorRequestHandler);
+// }
 
 // Final error handler
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
@@ -264,4 +298,11 @@ process.on("uncaughtException", (err) => {
 
 app.listen(port, () => {
   logger.info(`Listening on port ${port}`);
+  
+  // Initialize backtest scheduler and worker
+  scheduleDaily(100).catch((err) => {
+    logger.warn({ err }, "Failed to schedule daily backtest job");
+  });
+  
+  logger.info("Backtest worker started and listening for jobs");
 });

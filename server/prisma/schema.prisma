@@ -47,16 +47,13 @@ model ConsensusRun {
 
 model BacktestRun {
   id           Int      @id @default(autoincrement())
-  universe     String   // Trading universe description
-  window       String   // Time window (e.g., "2023-01-01 to 2023-12-31")
-  pnl          Float    // Profit/Loss
-  sharpe       Float?   // Sharpe ratio
-  sortino      Float?   // Sortino ratio
-  maxDrawdown  Float?   // Maximum drawdown
-  detailsJSON  Json     // Detailed backtest results
+  windowDays   Int
+  universeSize Int
+  pnl          Float
+  sharpe       Float
+  maxDrawdown  Float
+  detailsJSON  Json
   createdAt    DateTime @default(now())
-
-  @@index([createdAt])
 }
 
 model ApiKey {
@@ -83,4 +80,20 @@ model ApiUsage {
   apiKey     ApiKey   @relation(fields: [apiKeyId], references: [id])
 
   @@index([apiKeyId, createdAt])
+}
+
+model SignalDaily {
+  id          Int      @id @default(autoincrement())
+  date        DateTime // UTC day (truncate to 00:00:00Z)
+  token       String
+  score       Int
+  risk        String
+  outlook     String
+  decision    String   // BUY | HOLD | SELL
+  confidence  Float
+  priceUsd    Float
+  createdAt   DateTime @default(now())
+
+  @@unique([date, token])
+  @@index([date, decision])
 }
