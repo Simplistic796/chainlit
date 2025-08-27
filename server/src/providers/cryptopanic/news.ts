@@ -24,7 +24,10 @@ function pickSymbol(input: string) {
 }
 
 export async function getNewsForToken(input: string): Promise<{ symbol?: string; posts: CPPost[] }> {
-  if (!KEY) return { symbol: pickSymbol(input) || undefined, posts: [] };
+  if (!KEY) {
+    const sym = pickSymbol(input) || undefined;
+    return sym ? { symbol: sym, posts: [] } : { posts: [] };
+  }
 
   let symbol = pickSymbol(input);
   if (!symbol) {
@@ -32,7 +35,7 @@ export async function getNewsForToken(input: string): Promise<{ symbol?: string;
     const resolved = await resolveToCoinId(input).catch(() => null);
     if (resolved?.symbol) symbol = resolved.symbol.toUpperCase();
   }
-  if (!symbol) return { symbol: undefined, posts: [] };
+  if (!symbol) return { posts: [] };
 
   const cacheKey = `cp:news:${symbol}`;
   const cached = await cacheGetJSON<{ symbol: string; posts: CPPost[] }>(cacheKey);
