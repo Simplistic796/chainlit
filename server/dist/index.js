@@ -29,7 +29,7 @@ if (process.env.SENTRY_DSN) {
 }
 // Request ID + pino logger
 app.use((req, _res, next) => {
-    req.id = req.headers["x-request-id"] || (0, uuid_1.v4)();
+    req.id = req.headers["x-request-id"] ?? (0, uuid_1.v4)();
     next();
 });
 app.use((0, pino_http_1.default)({

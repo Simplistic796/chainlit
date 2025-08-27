@@ -1,0 +1,236 @@
+
+> server@1.0.0 dev
+> ts-node-dev src/index.ts
+
+[INFO] 11:46:50 ts-node-dev ver. 2.0.0 (using ts-node ver. 10.9.2, typescript ver. 5.9.2)
+[11:46:51.264] [32mINFO[39m: [36mListening on port 3000[39m
+    [35mservice[39m: "chainlit-server"
+[11:46:58.658] [32mINFO[39m: [36mrequest completed[39m
+    [35mservice[39m: "chainlit-server"
+    [35mreq[39m: {
+      "id": "8d58f787-9a8f-45b0-b432-f79b8d17f323",
+      "method": "GET",
+      "url": "/health",
+      "query": {},
+      "params": {},
+      "headers": {
+        "host": "localhost:3000",
+        "user-agent": "curl/8.7.1",
+        "accept": "*/*"
+      },
+      "remoteAddress": "::1",
+      "remotePort": 61968
+    }
+    [35mreqId[39m: "8d58f787-9a8f-45b0-b432-f79b8d17f323"
+    [35mres[39m: {
+      "statusCode": 200,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-security-policy": "default-src 'self';base-uri 'self';font-src 'self' https: data:;form-action 'self';frame-ancestors 'self';img-src 'self' data:;object-src 'none';script-src 'self';script-src-attr 'none';style-src 'self' https: 'unsafe-inline';upgrade-insecure-requests",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin",
+        "origin-agent-cluster": "?1",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-dns-prefetch-control": "off",
+        "x-download-options": "noopen",
+        "x-frame-options": "SAMEORIGIN",
+        "x-permitted-cross-domain-policies": "none",
+        "x-xss-protection": "0",
+        "ratelimit-policy": "60;w=60",
+        "ratelimit-limit": "60",
+        "ratelimit-remaining": "59",
+        "ratelimit-reset": "60",
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "22",
+        "etag": "W/\"16-LOpbqkeM0tPtGu6UAqHwuXIPQL0\""
+      }
+    }
+    [35mresponseTime[39m: 5
+[redis] connected
+[job completed] 18 token=ETH
+[11:47:13.654] [32mINFO[39m: [36mrequest completed[39m
+    [35mservice[39m: "chainlit-server"
+    [35mreq[39m: {
+      "id": "82f26f4e-8e4d-40b6-a598-a75817f8a8d7",
+      "method": "GET",
+      "url": "/analyze?token=ETH",
+      "query": {
+        "token": "ETH"
+      },
+      "params": {},
+      "headers": {
+        "host": "localhost:3000",
+        "user-agent": "curl/8.7.1",
+        "accept": "*/*"
+      },
+      "remoteAddress": "::1",
+      "remotePort": 61971
+    }
+    [35mreqId[39m: "82f26f4e-8e4d-40b6-a598-a75817f8a8d7"
+    [35mres[39m: {
+      "statusCode": 200,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-security-policy": "default-src 'self';base-uri 'self';font-src 'self' https: data:;form-action 'self';frame-ancestors 'self';img-src 'self' data:;object-src 'none';script-src 'self';script-src-attr 'none';style-src 'self' https: 'unsafe-inline';upgrade-insecure-requests",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin",
+        "origin-agent-cluster": "?1",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-dns-prefetch-control": "off",
+        "x-download-options": "noopen",
+        "x-frame-options": "SAMEORIGIN",
+        "x-permitted-cross-domain-policies": "none",
+        "x-xss-protection": "0",
+        "ratelimit-policy": "60;w=60",
+        "ratelimit-limit": "60",
+        "ratelimit-remaining": "58",
+        "ratelimit-reset": "49",
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "742",
+        "etag": "W/\"2e6-E+E5y3XwOkBXb7iGotG/B2N5iLk\""
+      }
+    }
+    [35mresponseTime[39m: 3135
+[11:57:59.376] [32mINFO[39m: [36mrequest completed[39m
+    [35mservice[39m: "chainlit-server"
+    [35mreq[39m: {
+      "id": "8fc3a9b5-0242-4aec-935c-d930da3bd3e1",
+      "method": "GET",
+      "url": "/health",
+      "query": {},
+      "params": {},
+      "headers": {
+        "host": "localhost:3000",
+        "user-agent": "curl/8.7.1",
+        "accept": "*/*"
+      },
+      "remoteAddress": "::1",
+      "remotePort": 62141
+    }
+    [35mreqId[39m: "8fc3a9b5-0242-4aec-935c-d930da3bd3e1"
+    [35mres[39m: {
+      "statusCode": 200,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-security-policy": "default-src 'self';base-uri 'self';font-src 'self' https: data:;form-action 'self';frame-ancestors 'self';img-src 'self' data:;object-src 'none';script-src 'self';script-src-attr 'none';style-src 'self' https: 'unsafe-inline';upgrade-insecure-requests",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin",
+        "origin-agent-cluster": "?1",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-dns-prefetch-control": "off",
+        "x-download-options": "noopen",
+        "x-frame-options": "SAMEORIGIN",
+        "x-permitted-cross-domain-policies": "none",
+        "x-xss-protection": "0",
+        "ratelimit-policy": "60;w=60",
+        "ratelimit-limit": "60",
+        "ratelimit-remaining": "59",
+        "ratelimit-reset": "60",
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "22",
+        "etag": "W/\"16-LOpbqkeM0tPtGu6UAqHwuXIPQL0\""
+      }
+    }
+    [35mresponseTime[39m: 2
+[job completed] 19 token=ETH
+Error: read ECONNRESET
+    at TLSWrap.onStreamRead (node:internal/stream_base_commons:216:20) {
+  errno: -54,
+  code: 'ECONNRESET',
+  syscall: 'read'
+}
+Error: read ECONNRESET
+    at TLSWrap.onStreamRead (node:internal/stream_base_commons:216:20) {
+  errno: -54,
+  code: 'ECONNRESET',
+  syscall: 'read'
+}
+Error: read ECONNRESET
+    at TLSWrap.onStreamRead (node:internal/stream_base_commons:216:20) {
+  errno: -54,
+  code: 'ECONNRESET',
+  syscall: 'read'
+}
+Error: read ECONNRESET
+    at TLSWrap.onStreamRead (node:internal/stream_base_commons:216:20) {
+  errno: -54,
+  code: 'ECONNRESET',
+  syscall: 'read'
+}
+[INFO] 12:29:04 Restarting: /Users/tamermohammad/Downloads/chainlit/server/src/index.ts has been modified
+[12:29:06.262] [32mINFO[39m: [36mListening on port 3000[39m
+    [35mservice[39m: "chainlit-server"
+[INFO] 12:29:10 Restarting: /Users/tamermohammad/Downloads/chainlit/server/src/index.ts has been modified
+[12:29:11.666] [32mINFO[39m: [36mListening on port 3000[39m
+    [35mservice[39m: "chainlit-server"
+[INFO] 12:29:11 Restarting: /Users/tamermohammad/Downloads/chainlit/server/src/index.ts has been modified
+[12:29:12.478] [32mINFO[39m: [36mListening on port 3000[39m
+    [35mservice[39m: "chainlit-server"
+[INFO] 12:29:21 Restarting: /Users/tamermohammad/Downloads/chainlit/server/src/index.ts has been modified
+Compilation error in /Users/tamermohammad/Downloads/chainlit/server/src/index.ts
+[ERROR] 12:29:22 ⨯ Unable to compile TypeScript:
+src/index.ts(148,18): error TS2339: Property 'Handlers' does not exist on type 'typeof import("/Users/tamermohammad/Downloads/chainlit/server/node_modules/@sentry/node/build/types/index")'.
+
+[INFO] 12:29:22 Restarting: /Users/tamermohammad/Downloads/chainlit/server/src/index.ts has been modified
+[ERROR] 12:29:22 ⨯ Unable to compile TypeScript:
+src/index.ts(148,18): error TS2339: Property 'Handlers' does not exist on type 'typeof import("/Users/tamermohammad/Downloads/chainlit/server/node_modules/@sentry/node/build/types/index")'.
+
+[INFO] 12:29:27 Restarting: /Users/tamermohammad/Downloads/chainlit/server/src/index.ts has been modified
+Compilation error in /Users/tamermohammad/Downloads/chainlit/server/src/index.ts
+[ERROR] 12:29:27 ⨯ Unable to compile TypeScript:
+src/index.ts(148,18): error TS2339: Property 'Handlers' does not exist on type 'typeof import("/Users/tamermohammad/Downloads/chainlit/server/node_modules/@sentry/node/build/types/index")'.
+
+[INFO] 12:29:27 Restarting: /Users/tamermohammad/Downloads/chainlit/server/src/index.ts has been modified
+[ERROR] 12:29:28 ⨯ Unable to compile TypeScript:
+src/index.ts(148,18): error TS2339: Property 'Handlers' does not exist on type 'typeof import("/Users/tamermohammad/Downloads/chainlit/server/node_modules/@sentry/node/build/types/index")'.
+
+[INFO] 12:29:31 Restarting: /Users/tamermohammad/Downloads/chainlit/server/src/index.ts has been modified
+Compilation error in /Users/tamermohammad/Downloads/chainlit/server/src/index.ts
+[ERROR] 12:29:32 ⨯ Unable to compile TypeScript:
+src/index.ts(148,18): error TS2339: Property 'Handlers' does not exist on type 'typeof import("/Users/tamermohammad/Downloads/chainlit/server/node_modules/@sentry/node/build/types/index")'.
+
+[INFO] 12:29:32 Restarting: /Users/tamermohammad/Downloads/chainlit/server/src/index.ts has been modified
+[ERROR] 12:29:32 ⨯ Unable to compile TypeScript:
+src/index.ts(148,18): error TS2339: Property 'Handlers' does not exist on type 'typeof import("/Users/tamermohammad/Downloads/chainlit/server/node_modules/@sentry/node/build/types/index")'.
+
+[INFO] 12:29:38 Restarting: /Users/tamermohammad/Downloads/chainlit/server/src/index.ts has been modified
+Compilation error in /Users/tamermohammad/Downloads/chainlit/server/src/index.ts
+[ERROR] 12:29:39 ⨯ Unable to compile TypeScript:
+src/index.ts(148,18): error TS2339: Property 'Handlers' does not exist on type 'typeof import("/Users/tamermohammad/Downloads/chainlit/server/node_modules/@sentry/node/build/types/index")'.
+
+[INFO] 12:29:39 Restarting: /Users/tamermohammad/Downloads/chainlit/server/src/index.ts has been modified
+[ERROR] 12:29:39 ⨯ Unable to compile TypeScript:
+src/index.ts(148,18): error TS2339: Property 'Handlers' does not exist on type 'typeof import("/Users/tamermohammad/Downloads/chainlit/server/node_modules/@sentry/node/build/types/index")'.
+
+[INFO] 12:29:43 Restarting: /Users/tamermohammad/Downloads/chainlit/server/src/index.ts has been modified
+Compilation error in /Users/tamermohammad/Downloads/chainlit/server/src/index.ts
+[ERROR] 12:29:43 ⨯ Unable to compile TypeScript:
+src/index.ts(148,18): error TS2339: Property 'Handlers' does not exist on type 'typeof import("/Users/tamermohammad/Downloads/chainlit/server/node_modules/@sentry/node/build/types/index")'.
+
+[INFO] 12:29:48 Restarting: /Users/tamermohammad/Downloads/chainlit/server/src/index.ts has been modified
+Compilation error in /Users/tamermohammad/Downloads/chainlit/server/src/index.ts
+[ERROR] 12:29:48 ⨯ Unable to compile TypeScript:
+src/index.ts(148,18): error TS2339: Property 'Handlers' does not exist on type 'typeof import("/Users/tamermohammad/Downloads/chainlit/server/node_modules/@sentry/node/build/types/index")'.
+
+[INFO] 12:29:49 Restarting: /Users/tamermohammad/Downloads/chainlit/server/src/index.ts has been modified
+[ERROR] 12:29:49 ⨯ Unable to compile TypeScript:
+src/index.ts(148,18): error TS2339: Property 'Handlers' does not exist on type 'typeof import("/Users/tamermohammad/Downloads/chainlit/server/node_modules/@sentry/node/build/types/index")'.
+
+[INFO] 12:29:53 Restarting: /Users/tamermohammad/Downloads/chainlit/server/src/index.ts has been modified
+Compilation error in /Users/tamermohammad/Downloads/chainlit/server/src/index.ts
+[ERROR] 12:29:53 ⨯ Unable to compile TypeScript:
+src/index.ts(148,18): error TS2339: Property 'Handlers' does not exist on type 'typeof import("/Users/tamermohammad/Downloads/chainlit/server/node_modules/@sentry/node/build/types/index")'.
+
+[INFO] 12:29:54 Restarting: /Users/tamermohammad/Downloads/chainlit/server/src/index.ts has been modified
+[ERROR] 12:29:54 ⨯ Unable to compile TypeScript:
+src/index.ts(148,18): error TS2339: Property 'Handlers' does not exist on type 'typeof import("/Users/tamermohammad/Downloads/chainlit/server/node_modules/@sentry/node/build/types/index")'.
+
+[INFO] 12:30:07 Restarting: /Users/tamermohammad/Downloads/chainlit/server/src/index.ts has been modified
+[12:30:08.581] [32mINFO[39m: [36mListening on port 3000[39m
+    [35mservice[39m: "chainlit-server"

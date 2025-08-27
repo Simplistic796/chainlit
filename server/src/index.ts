@@ -1,5 +1,6 @@
 // src/index.ts
 import express from "express";
+import type { Request, Response, NextFunction, ErrorRequestHandler } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
@@ -27,8 +28,8 @@ if (process.env.SENTRY_DSN) {
 }
 
 // Request ID + pino logger
-app.use((req, _res, next) => {
-  (req as any).id = req.headers["x-request-id"] || uuidv4();
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  (req as any).id = (req.headers["x-request-id"] as string) ?? uuidv4();
   next();
 });
 app.use(
@@ -52,7 +53,7 @@ app.use(apiLimiter);
 
 app.use(express.json());
 
-app.get("/health", (req, res) => {
+app.get("/health", (req: Request, res: Response) => {
   res.send("Server is running 🚀");
 });
 
@@ -62,7 +63,7 @@ const AnalyzeQuery = z.object({
 });
 
 // GET /analyze?token=ETH
-app.get("/analyze", async (req, res) => {
+app.get("/analyze", async (req: Request, res: Response) => {
   const token = String((req.query as any).token || "").trim();
   if (!token) return res.status(400).json({ error: "token is required" });
 
@@ -99,7 +100,7 @@ app.get("/analyze", async (req, res) => {
 });
 
 // GET /recent -> last 3 lookups
-app.get("/recent", async (_req, res) => {
+app.get("/recent", async (_req: Request, res: Response) => {
   const rows = await prisma.tokenLookup.findMany({
     take: 3,
     orderBy: { createdAt: "desc" },
@@ -108,7 +109,7 @@ app.get("/recent", async (_req, res) => {
 });
 
 // POST /jobs/analyze { token }
-app.post("/jobs/analyze", async (req, res) => {
+app.post("/jobs/analyze", async (req: Request, res: Response) => {
   const token = String(req.body?.token || "").trim();
   if (!token) return res.status(400).json({ error: "token is required" });
   try {
@@ -123,7 +124,7 @@ app.post("/jobs/analyze", async (req, res) => {
 const DebateRequest = z.object({ token: z.string().min(1), rounds: z.number().int().min(1).max(5).optional() });
 
 // start debate
-app.post("/debate", async (req, res) => {
+app.post("/debate", async (req: Request, res: Response) => {
   const parsed = DebateRequest.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -132,7 +133,7 @@ app.post("/debate", async (req, res) => {
 });
 
 // fetch last consensus for a token
-app.get("/consensus/:token", async (req, res) => {
+app.get("/consensus/:token", async (req: Request, res: Response) => {
   const token = String(req.params.token);
   const row = await prisma.consensusRun.findFirst({
     where: { token },
@@ -144,14 +145,14 @@ app.get("/consensus/:token", async (req, res) => {
 
 // Sentry error handler AFTER routes (only if Sentry is available)
 if (process.env.SENTRY_DSN) {
-  app.use((Sentry as any).Handlers.errorHandler());
+  app.use((Sentry as any).Handlers.errorHandler() as ErrorRequestHandler);
 }
 
 // Final error handler
-app.use((err: any, _req: any, res: any, _next: any) => {
+app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   logger.error({ err }, "unhandled error");
   res.status(500).json({ error: "internal_error" });
-});
+ });
 
 // Process-level guards
 process.on("unhandledRejection", (reason) => logger.error({ reason }, "unhandledRejection"));
