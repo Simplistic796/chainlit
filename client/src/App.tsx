@@ -25,6 +25,15 @@ type RecentRow = {
   createdAt: string;
 };
 
+type ConsensusRow = {
+  id: number;
+  token: string;
+  decision: "BUY" | "HOLD" | "SELL" | string;
+  confidence: number;
+  rationaleJSON: string[];
+  createdAt: string;
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:3000";
 
 export default function App() {
@@ -35,6 +44,8 @@ export default function App() {
   const [recent, setRecent] = useState<RecentRow[]>([]);
   const [loadingRecent, setLoadingRecent] = useState(false);
   const [showAboutScore, setShowAboutScore] = useState(false);
+  const [consensus, setConsensus] = useState<ConsensusRow | null>(null);
+  const [debating, setDebating] = useState(false);
 
   const fetchRecent = async () => {
     try {
@@ -77,6 +88,42 @@ export default function App() {
     return "destructive";
   }
 
+  async function startDebate() {
+    const q = token.trim();
+    if (!q) return;
+    setDebating(true);
+    setConsensus(null);
+    try {
+      await axios.post(`${API_BASE}/debate`, { token: q, rounds: 3 });
+
+      const started = Date.now();
+      const poll = async () => {
+        try {
+          const res = await axios.get<ConsensusRow>(`${API_BASE}/consensus/${encodeURIComponent(q)}`);
+          if (res.data && res.data.token.toLowerCase() === q.toLowerCase()) {
+            setConsensus(res.data);
+            setDebating(false);
+            return;
+          }
+        } catch {}
+        if (Date.now() - started < 12000) {
+          setTimeout(poll, 1500);
+        } else {
+          setDebating(false);
+        }
+      };
+      poll();
+    } catch {
+      setDebating(false);
+    }
+  }
+
+  function decisionVariant(d: string) {
+    if (d === "BUY") return "default";
+    if (d === "HOLD") return "secondary";
+    return "destructive";
+  }
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <AppToaster />
@@ -101,6 +148,9 @@ export default function App() {
               />
               <Button onClick={() => analyze()} disabled={!token || loading}>
                 {loading ? "Analyzing..." : "Analyze"}
+              </Button>
+              <Button variant="secondary" onClick={startDebate} disabled={!token || debating}>
+                {debating ? "Debating…" : "Run Debate"}
               </Button>
             </div>
           </CardContent>
@@ -145,6 +195,32 @@ export default function App() {
                     </ul>
                   </div>
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {consensus && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-3">
+                Consensus for <span className="font-mono">{consensus.token}</span>
+                <Badge variant={decisionVariant(consensus.decision)}>
+                  {consensus.decision}
+                </Badge>
+                <Badge variant="secondary">
+                  Confidence: {(consensus.confidence * 100).toFixed(0)}%
+                </Badge>
+              </CardTitle>
+              <CardDescription>Round-robin debate outcome (Sentiment · Valuation · Risk)</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <div className="text-sm font-medium text-muted-foreground">Rationales</div>
+              <ul className="list-disc pl-6 space-y-1">
+                {consensus.rationaleJSON.map((r, i) => <li key={i}>{r}</li>)}
+              </ul>
+              <div className="text-xs text-muted-foreground mt-2">
+                Created: {new Date(consensus.createdAt).toLocaleString()}
               </div>
             </CardContent>
           </Card>
