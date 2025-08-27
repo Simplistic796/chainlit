@@ -9,9 +9,34 @@ import { analyzeToken } from "./lib/scoring/scoring";
 import { enqueueAnalyze, analyzeEvents } from "./jobs/queue";
 import { cacheGetJSON, getRedis } from "./cache/redis";
 import { enqueueDebate } from "./jobs/consensus/queue";
+import { logger } from "./observability/logger";
+import { initSentry, Sentry } from "./observability/sentry";
+import pinoHttp from "pino-http";
+import { v4 as uuidv4 } from "uuid";
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
+
+// Initialize Sentry + logging
+initSentry();
+
+// Sentry request/tracing handlers FIRST (only if Sentry is available)
+if (process.env.SENTRY_DSN) {
+  app.use((Sentry as any).Handlers.requestHandler());
+  app.use((Sentry as any).Handlers.tracingHandler());
+}
+
+// Request ID + pino logger
+app.use((req, _res, next) => {
+  (req as any).id = req.headers["x-request-id"] || uuidv4();
+  next();
+});
+app.use(
+  pinoHttp({
+    logger,
+    customProps: (req) => ({ reqId: (req as any).id }),
+  })
+);
 
 app.use(cors());
 app.use(helmet());
@@ -60,7 +85,7 @@ app.get("/analyze", async (req, res) => {
       if (after) return res.json(after);
     }
   } catch (e) {
-    console.warn("Job path failed, falling back inline:", (e as Error)?.message);
+    logger.warn({ err: e }, "Job path failed, falling back inline");
   }
 
   // 3) Fallback: run inline
@@ -68,7 +93,7 @@ app.get("/analyze", async (req, res) => {
     const result = await analyzeToken(token);
     return res.json(result);
   } catch (e) {
-    console.error("Inline analyze failed:", (e as Error)?.message);
+    logger.error({ err: e }, "Inline analyze failed");
     return res.status(500).json({ error: "analysis failed" });
   }
 });
@@ -90,7 +115,7 @@ app.post("/jobs/analyze", async (req, res) => {
     const job = await enqueueAnalyze(token);
     return res.json({ jobId: job.id });
   } catch (e: any) {
-    console.error("enqueue error:", e);
+    logger.error({ err: e }, "enqueue error");
     return res.status(500).json({ error: "failed to enqueue" });
   }
 });
@@ -117,6 +142,24 @@ app.get("/consensus/:token", async (req, res) => {
   return res.json(row);
 });
 
+// Sentry error handler AFTER routes (only if Sentry is available)
+if (process.env.SENTRY_DSN) {
+  app.use((Sentry as any).Handlers.errorHandler());
+}
+
+// Final error handler
+app.use((err: any, _req: any, res: any, _next: any) => {
+  logger.error({ err }, "unhandled error");
+  res.status(500).json({ error: "internal_error" });
+});
+
+// Process-level guards
+process.on("unhandledRejection", (reason) => logger.error({ reason }, "unhandledRejection"));
+process.on("uncaughtException", (err) => {
+  logger.fatal({ err }, "uncaughtException");
+  // optional: process.exit(1);
+});
+
 app.listen(port, () => {
-  console.log(`Listening on port ${port}`);
+  logger.info(`Listening on port ${port}`);
 });
