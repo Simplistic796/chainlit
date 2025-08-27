@@ -5,6 +5,7 @@ import { z } from "zod";
 import { prisma } from "./db/prisma";
 import { analyzeToken } from "./lib/scoring/scoring";
 import { enqueueAnalyze } from "./jobs/queue";
+import { enqueueDebate } from "./jobs/consensus/queue";
 
 const app = express();
 const port = 3000;
@@ -71,6 +72,28 @@ app.post("/jobs/analyze", async (req, res) => {
     console.error("enqueue error:", e);
     return res.status(500).json({ error: "failed to enqueue" });
   }
+});
+
+const DebateRequest = z.object({ token: z.string().min(1), rounds: z.number().int().min(1).max(5).optional() });
+
+// start debate
+app.post("/debate", async (req, res) => {
+  const parsed = DebateRequest.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const job = await enqueueDebate({ token: parsed.data.token, context: {} }, { attempts: 1 });
+  return res.json({ jobId: job.id });
+});
+
+// fetch last consensus for a token
+app.get("/consensus/:token", async (req, res) => {
+  const token = String(req.params.token);
+  const row = await prisma.consensusRun.findFirst({
+    where: { token },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!row) return res.status(404).json({ error: "No consensus yet" });
+  return res.json(row);
 });
 
 app.listen(port, () => {

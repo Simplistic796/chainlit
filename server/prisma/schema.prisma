@@ -20,27 +20,27 @@ model TokenLookup {
   @@index([token, createdAt])
 }
 
-// Multi-Agent Models (to be implemented):
 model AgentRun {
   id          Int      @id @default(autoincrement())
-  agentType   String   // sentiment, valuation, risk, consensus
   token       String
-  inputsJSON  Json     // Agent input data
-  outputJSON  Json     // Agent output data
+  agentType   String   // "sentiment" | "valuation" | "risk"
+  inputsJSON  Json
+  outputJSON  Json
   score       Float?
-  confidence  Float
+  confidence  Float?
   createdAt   DateTime @default(now())
 
-  @@index([agentType, token, createdAt])
+  @@index([token, createdAt])
+  @@index([agentType, createdAt])
 }
 
 model ConsensusRun {
-  id            Int      @id @default(autoincrement())
-  token         String
-  decision      String   // BUY, HOLD, SELL
-  confidence    Float
-  rationaleJSON Json     // Array of agent rationales
-  createdAt     DateTime @default(now())
+  id           Int      @id @default(autoincrement())
+  token        String
+  decision     String   // "BUY" | "HOLD" | "SELL"
+  confidence   Float
+  rationaleJSON Json
+  createdAt    DateTime @default(now())
 
   @@index([token, createdAt])
 }
