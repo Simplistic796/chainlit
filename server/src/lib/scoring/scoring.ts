@@ -52,6 +52,13 @@ export async function analyzeToken(input: string): Promise<AnalysisResult> {
     evidence.push("Market: live data unavailable; used heuristic only (fallback).");
   }
 
+  // Optional: hint if news was used (light-touch; main news logic in agent)
+  try {
+    const mod = await import("../../providers/cryptopanic/news");
+    const { posts } = await mod.getNewsForToken(token);
+    evidence.push(`News: ${posts.length} recent items found (CryptoPanic).`);
+  } catch {}
+
   // ----- ETHERSCAN (only if input looks like an address) -----
   const isAddress = token.toLowerCase().startsWith("0x") && token.length >= 8;
   if (isAddress) {
