@@ -10,7 +10,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev --name init",
     "migrate:deploy": "prisma migrate deploy",
-    "key:create": "ts-node scripts/create-key.ts"
+    "key:create": "ts-node scripts/create-key.ts",
+    "postinstall": "prisma generate"
   },
   "keywords": [],
   "author": "",
