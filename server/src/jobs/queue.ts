@@ -1,8 +1,8 @@
 // src/jobs/queue.ts
 import { Queue, QueueEvents, Worker, JobsOptions } from "bullmq";
 import { prisma } from "../db/prisma";
-import { getRedisForBullMQ } from "../cache/redis";
-import { analyzeTokenMock } from "../lib/scoring/mockScoring"; // will swap with real scoring later
+import { getRedisForBullMQ, cacheSetJSON } from "../cache/redis";
+import { analyzeToken } from "../lib/scoring/scoring";
 
 // Multi-Agent Queue Names (to be implemented):
 // queue:sentiment.analyze
@@ -13,38 +13,54 @@ import { analyzeTokenMock } from "../lib/scoring/mockScoring"; // will swap with
 const connection = getRedisForBullMQ();
 export type AnalyzeJobData = { token: string };
 
-export const analyzeQueue = new Queue<AnalyzeJobData>("analyze", { connection: connection as any });
-export const analyzeEvents = new QueueEvents("analyze", { connection: connection as any });
+export const analyzeQueue = connection ? new Queue<AnalyzeJobData>("analyze", { connection: connection as any }) : null as unknown as Queue<AnalyzeJobData>;
+export const analyzeEvents = connection ? new QueueEvents("analyze", { connection: connection as any }) : null as unknown as QueueEvents;
 
-export const analyzeWorker = new Worker<AnalyzeJobData>(
-  "analyze",
-  async (job) => {
-    const { token } = job.data;
+export const analyzeWorker = connection
+  ? new Worker<AnalyzeJobData>(
+      "analyze",
+      async (job) => {
+        const { token } = job.data;
 
-    // TODO: replace with real data fetch & scoring
-    const result = analyzeTokenMock(token);
+        // 1) Run full analysis (live providers + heuristics)
+        const result = await analyzeToken(token);
 
-    await prisma.tokenLookup.create({
-      data: {
-        token: result.token,
-        score: result.score,
-        risk: result.risk,
-        outlook: result.outlook,
+        await prisma.tokenLookup.create({
+          data: {
+            token: result.token,
+            score: result.score,
+            risk: result.risk,
+            outlook: result.outlook,
+          },
+        });
+
+        // 3) Write hot cache for quick reads (TTL ~60s)
+        try { await cacheSetJSON(`analysis:${token.toLowerCase()}`, result, 60); } catch {}
+
+        return result;
       },
-    });
+      { connection: connection as any, concurrency: 2 }
+    )
+  : (null as unknown as Worker<AnalyzeJobData>);
 
-    return result;
-  },
-  { connection: connection as any, concurrency: 2 }
-);
-
-analyzeWorker.on("completed", (job, res) => {
-  console.log(`[job completed] ${job.id} token=${job.data.token} score=${(res as any)?.score}`);
-});
-analyzeWorker.on("failed", (job, err) => {
-  console.error(`[job failed] ${job?.id} ${err?.message}`);
-});
+if (connection && analyzeWorker) {
+  analyzeWorker.on("completed", (job, res) => {
+    console.log(`[job completed] ${job.id} token=${job.data.token}`);
+  });
+  analyzeWorker.on("failed", (job, err) => {
+    console.error(`[job failed] ${job?.id} ${err?.message}`);
+  });
+}
 
 export async function enqueueAnalyze(token: string, opts?: JobsOptions) {
-  return analyzeQueue.add("analyze-token", { token }, { removeOnComplete: 50, removeOnFail: 50, ...(opts || {}) });
+  if (!connection || !analyzeQueue) {
+    throw new Error("Redis not configured for BullMQ");
+  }
+  return analyzeQueue.add("analyze-token", { token }, {
+    removeOnComplete: 50,
+    removeOnFail: 50,
+    attempts: 2,
+    backoff: { type: "exponential", delay: 1500 },
+    ...(opts || {})
+  });
 }

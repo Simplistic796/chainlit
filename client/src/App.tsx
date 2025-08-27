@@ -7,7 +7,7 @@ import { Badge } from "./components/ui/badge";
 import { Separator } from "./components/ui/separator";
 import AppToaster from "./components/AppToaster";
 import { useToast } from "./components/ui/use-toast";
-import { ScoreDial } from "./components/ScoreDial";
+import ScoreDial from "./components/ScoreDial";
 
 type AnalysisResult = {
   token: string;
@@ -166,33 +166,36 @@ export default function App() {
               </CardTitle>
               <CardDescription>Explainable score with evidence</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-                <div className="flex justify-center">
-                  <ScoreDial score={result.score} />
+            <CardContent className="space-y-4">
+              <div className="grid gap-6 md:grid-cols-2 items-center">
+                <div className="flex justify-center md:justify-start">
+                  <ScoreDial score={result.score} label="Score" />
                 </div>
-                <div className="space-y-4">
-                  <div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowAboutScore(!showAboutScore)}
-                      className="text-sm text-muted-foreground hover:text-foreground"
-                    >
-                      ⓘ About the score
-                    </Button>
-                    {showAboutScore && (
-                      <div className="mt-2 p-3 bg-muted/50 rounded-md text-sm text-muted-foreground">
-                        Score blends heuristic + market (CoinGecko), on-chain (Etherscan), liquidity (DexScreener), and holders (Covalent). We normalize signals and apply explainable weights. This is not financial advice.
-                      </div>
-                    )}
+
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={riskVariant(result.risk)}>Risk: {result.risk}</Badge>
+                    <Badge variant={outlookVariant(result.outlook)}>Outlook: {result.outlook}</Badge>
                   </div>
+
                   <Separator />
+
                   <div className="space-y-2">
                     <div className="text-sm font-medium text-muted-foreground">Evidence</div>
                     <ul className="list-disc pl-6 space-y-1">
                       {result.evidence.map((ev, i) => <li key={i}>{ev}</li>)}
                     </ul>
+                  </div>
+
+                  <div className="text-sm text-muted-foreground">
+                    <details>
+                      <summary className="cursor-pointer hover:underline">ⓘ About the score</summary>
+                      <div className="mt-2">
+                        The score blends heuristic + market (CoinGecko), on-chain (Etherscan), liquidity (DexScreener),
+                        and holders (Covalent). Signals are normalized and weighted; evidence lists the reasons.
+                        Not financial advice.
+                      </div>
+                    </details>
                   </div>
                 </div>
               </div>

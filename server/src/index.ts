@@ -1,16 +1,30 @@
 // src/index.ts
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { prisma } from "./db/prisma";
 import { analyzeToken } from "./lib/scoring/scoring";
 import { enqueueAnalyze } from "./jobs/queue";
+import { cacheGetJSON, getRedis } from "./cache/redis";
 import { enqueueDebate } from "./jobs/consensus/queue";
 
 const app = express();
 const port = 3000;
 
 app.use(cors());
+app.use(helmet());
+app.set("trust proxy", 1);
+
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use(apiLimiter);
+
 app.use(express.json());
 
 app.get("/health", (req, res) => {
@@ -24,32 +38,39 @@ const AnalyzeQuery = z.object({
 
 // GET /analyze?token=ETH
 app.get("/analyze", async (req, res) => {
-  const parsed = AnalyzeQuery.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.flatten() });
-  }
+  const token = String((req.query as any).token || "").trim();
+  if (!token) return res.status(400).json({ error: "token is required" });
 
-  const token = String(parsed.data.token).trim();
+  const key = `analysis:${token.toLowerCase()}`;
 
-  // Use new scoring engine (async)
-  const result = await analyzeToken(token);
-
-  // Save to DB (recent searches)
+  // 1) Serve from cache if hot
   try {
-    await prisma.tokenLookup.create({
-      data: {
-        token: result.token,
-        score: result.score,
-        risk: result.risk,
-        outlook: result.outlook,
-      },
-    });
+    const cached = await cacheGetJSON<any>(key);
+    if (cached) return res.json(cached);
+  } catch {}
+
+  // 2) If Redis is available, enqueue a job and wait briefly for it to finish
+  try {
+    const r = getRedis();
+    if (r) {
+      const job = await enqueueAnalyze(token);
+      const result = await job.waitUntilFinished(r as any, 8000).catch(() => null);
+      if (result) return res.json(result);
+      const after = await cacheGetJSON<any>(key);
+      if (after) return res.json(after);
+    }
   } catch (e) {
-    // non-fatal for MVP; log and continue
-    console.error("DB save error:", e);
+    console.warn("Job path failed, falling back inline:", (e as Error)?.message);
   }
 
-  return res.json(result);
+  // 3) Fallback: run inline
+  try {
+    const result = await analyzeToken(token);
+    return res.json(result);
+  } catch (e) {
+    console.error("Inline analyze failed:", (e as Error)?.message);
+    return res.status(500).json({ error: "analysis failed" });
+  }
 });
 
 // GET /recent -> last 3 lookups
