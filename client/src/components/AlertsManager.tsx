@@ -27,7 +27,7 @@ export default function AlertsManager() {
 
   async function load() {
     try {
-      const r = await api.get("/v1/alerts");
+      const r = await api.get("/ui/alerts");
       setAlerts((r.data as any)?.data || []);
     } catch { /* ignore */ }
   }
@@ -38,7 +38,7 @@ export default function AlertsManager() {
     try {
       const condition =
         type === "score_threshold" ? { scoreGte: Number(score || 0) } : {};
-      await api.post("/v1/alerts", {
+      await api.post("/ui/alerts", {
         token: token.trim().toUpperCase(),
         type,
         condition,
@@ -53,12 +53,12 @@ export default function AlertsManager() {
   }
 
   async function toggle(id: number) {
-    await api.patch(`/v1/alerts/${id}/toggle`);
+    await api.patch(`/ui/alerts/${id}/toggle`);
     await load();
   }
 
   async function remove(id: number) {
-    await api.delete(`/v1/alerts/${id}`);
+    await api.delete(`/ui/alerts/${id}`);
     await load();
   }
 

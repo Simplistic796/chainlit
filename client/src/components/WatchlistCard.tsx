@@ -14,7 +14,7 @@ export default function WatchlistCard() {
 
   async function load() {
     try {
-      const r = await api.get("/v1/watchlist");
+      const r = await api.get("/ui/watchlist");
       setItems((r.data as any)?.data || []);
     } catch { /* ignore */ }
   }
@@ -22,7 +22,7 @@ export default function WatchlistCard() {
     if (!tok.trim()) return;
     setAdding(true);
     try {
-      await api.post("/v1/watchlist", { token: tok.trim().toUpperCase() });
+      await api.post("/ui/watchlist", { token: tok.trim().toUpperCase() });
       setTok("");
       await load();
     } finally {
@@ -30,7 +30,7 @@ export default function WatchlistCard() {
     }
   }
   async function remove(token: string) {
-    await api.delete(`/v1/watchlist/${encodeURIComponent(token)}`);
+    await api.delete(`/ui/watchlist/${encodeURIComponent(token)}`);
     await load();
   }
 

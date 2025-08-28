@@ -1,4 +1,5 @@
 // src/index.ts
+import "dotenv/config";
 import express from "express";
 import type { Request, Response, NextFunction, ErrorRequestHandler } from "express";
 import cors from "cors";
@@ -24,6 +25,12 @@ const port = Number(process.env.PORT || 3000);
 
 // Initialize Sentry + logging
 initSentry();
+
+// Debug environment variables
+console.log("Environment check:");
+console.log("DEMO_API_KEY:", process.env.DEMO_API_KEY ? "SET" : "NOT SET");
+console.log("NODE_ENV:", process.env.NODE_ENV);
+console.log("DATABASE_URL:", process.env.DATABASE_URL ? "SET" : "NOT SET");
 
 // Sentry request/tracing handlers FIRST (only if Sentry is available)
 // TODO: Fix Sentry v10+ integration
@@ -172,6 +179,43 @@ const v1 = express.Router();
 
 // secure all v1 endpoints
 v1.use(apiAuth, logApiUsage);
+
+// UI Routes (server-owned, no auth header needed)
+const ui = express.Router();
+
+// attach the demo ApiKey object to req (like apiAuth would do)
+ui.use(async (req, res, next) => {
+  try {
+    // Inline uiKey logic to avoid import issues
+    let cached: any = null;
+    if (cached) {
+      (req as any).apiKey = cached;
+      return next();
+    }
+    
+    const raw = process.env.DEMO_API_KEY || "";
+    console.log("DEMO_API_KEY:", raw ? "SET" : "NOT SET");
+    if (!raw) throw new Error("DEMO_API_KEY not set");
+    
+    const { hashKey } = await import("./api/auth");
+    const keyHash = hashKey(raw);
+    console.log("Looking for key hash:", keyHash);
+    
+    const key = await prisma.apiKey.findFirst({ where: { keyHash, isActive: true } });
+    if (!key) throw new Error("DEMO_API_KEY hash not found in DB (make sure you created the key)");
+    console.log("Found API key:", key.id);
+    
+    cached = key;
+    (req as any).apiKey = key;
+    next();
+  } catch (e: any) {
+    console.error("UI key error:", e);
+    return res.status(500).json({ ok: false, error: "ui_key_missing" });
+  }
+});
+
+// Optional: record usage for analytics
+ui.use(logApiUsage);
 
 // GET /v1/health (authed variant)
 v1.get("/health", (req, res) => ok(res, { status: "ok" }));
@@ -344,6 +388,70 @@ v1.get("/docs", (req, res) => {
     rateLimits: "Per API key; see plan. 429 on exceed.",
   });
 });
+
+// --- UI Routes (same bodies as /v1) ---
+ui.get("/watchlist", async (req, res) => {
+  const key = (req as any).apiKey;
+  const rows = await prisma.watchItem.findMany({ where: { apiKeyId: key.id }, orderBy: { createdAt: "desc" } });
+  return ok(res, rows);
+});
+
+ui.post("/watchlist", async (req, res) => {
+  const key = (req as any).apiKey;
+  const token = String(req.body?.token || "").trim();
+  if (!token) return fail(res, 400, "token_required");
+  const row = await prisma.watchItem.upsert({
+    where: { apiKeyId_token: { apiKeyId: key.id, token } },
+    update: {},
+    create: { apiKeyId: key.id, token },
+  });
+  return ok(res, row);
+});
+
+ui.delete("/watchlist/:token", async (req, res) => {
+  const key = (req as any).apiKey;
+  const token = String(req.params.token || "");
+  await prisma.watchItem.deleteMany({ where: { apiKeyId: key.id, token } });
+  return ok(res, { removed: token });
+});
+
+// --- Alerts (same bodies as /v1) ---
+ui.get("/alerts", async (req, res) => {
+  const key = (req as any).apiKey;
+  const rows = await prisma.alert.findMany({ where: { apiKeyId: key.id }, orderBy: { createdAt: "desc" } });
+  return ok(res, rows);
+});
+
+ui.post("/alerts", async (req, res) => {
+  const key = (req as any).apiKey;
+  const token = String(req.body?.token || "").trim();
+  const type = String(req.body?.type || "");
+  const condition = req.body?.condition ?? {};
+  const channel = String(req.body?.channel || "webhook");
+  const target = String(req.body?.target || "");
+  if (!token || !type || !target) return fail(res, 400, "token_type_target_required");
+  const row = await prisma.alert.create({ data: { apiKeyId: key.id, token, type, condition, channel, target } });
+  return ok(res, row);
+});
+
+ui.patch("/alerts/:id/toggle", async (req, res) => {
+  const key = (req as any).apiKey;
+  const id = Number(req.params.id);
+  const a = await prisma.alert.findFirst({ where: { id, apiKeyId: key.id } });
+  if (!a) return fail(res, 404, "alert_not_found");
+  const row = await prisma.alert.update({ where: { id }, data: { isActive: !a.isActive } });
+  return ok(res, row);
+});
+
+ui.delete("/alerts/:id", async (req, res) => {
+  const key = (req as any).apiKey;
+  const id = Number(req.params.id);
+  await prisma.alert.deleteMany({ where: { id, apiKeyId: key.id } });
+  return ok(res, { removed: id });
+});
+
+// mount under /ui
+app.use("/ui", ui);
 
 // mount under /v1
 app.use("/v1", v1);
