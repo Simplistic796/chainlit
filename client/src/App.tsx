@@ -11,7 +11,7 @@ import ScoreDial from "@/components/ScoreDial";
 import AgentChip from "@/components/AgentChip";
 import WatchlistCard from "@/components/WatchlistCard";
 import AlertsManager from "@/components/AlertsManager";
-import SubscribeCard from "@/components/SubscribeCard";
+import NavBar from "@/components/NavBar";
 
 
 type AnalysisResult = {
@@ -152,9 +152,10 @@ export default function App() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <AppToaster />
+      <NavBar />
       <div className="mx-auto max-w-5xl p-6 space-y-6">
         <header className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">ChainLit — Crypto Analyst</h1>
+          <h1 className="text-3xl font-semibold">ChainLit — Crypto Analyst</h1>
           <div className="text-sm text-muted-foreground">Not financial advice</div>
         </header>
 
@@ -303,10 +304,9 @@ export default function App() {
 
         <Separator className="my-6" />
 
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2">
           <WatchlistCard />
           <AlertsManager />
-          <SubscribeCard />
         </div>
       </div>
     </div>

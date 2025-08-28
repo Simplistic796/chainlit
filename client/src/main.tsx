@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Link } from "react-router-dom";
 import App from "./App.tsx";
 import Terms from "./pages/Terms.tsx";
 import Privacy from "./pages/Privacy.tsx";
+import PricingPage from "./pages/PricingPage.tsx";
 import "./index.css";
 
 // Optional Sentry init for client (requires VITE_SENTRY_DSN set in Vercel if you enable)
@@ -17,6 +18,7 @@ function Shell() {
         <Route path="/" element={<App />} />
         <Route path="/terms" element={<Terms />} />
         <Route path="/privacy" element={<Privacy />} />
+        <Route path="/pricing" element={<PricingPage />} />
       </Routes>
       <footer className="text-center text-xs text-muted-foreground my-8">
         <Link to="/terms" className="hover:underline mr-3">Terms</Link>
