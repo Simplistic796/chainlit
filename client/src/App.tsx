@@ -9,6 +9,9 @@ import AppToaster from "./components/AppToaster";
 import { useToast } from "./components/ui/use-toast";
 import ScoreDial from "@/components/ScoreDial";
 import AgentChip from "@/components/AgentChip";
+import WatchlistCard from "@/components/WatchlistCard";
+import AlertsManager from "@/components/AlertsManager";
+import { getApiKey, setApiKey } from "@/lib/api";
 
 type AnalysisResult = {
   token: string;
@@ -55,6 +58,17 @@ export default function App() {
   const [consensus, setConsensus] = useState<ConsensusRow | null>(null);
   const [debating, setDebating] = useState(false);
   const [opinions, setOpinions] = useState<AgentOpinionDTO[]>([]);
+
+  // API key state
+  const [apiKey, setApiKeyLocal] = useState<string>("");
+
+  useEffect(() => {
+    setApiKeyLocal(getApiKey());
+  }, []);
+
+  function saveKey() {
+    setApiKey(apiKey.trim());
+  }
 
   const fetchRecent = async () => {
     try {
@@ -151,6 +165,22 @@ export default function App() {
           <h1 className="text-2xl font-semibold">ChainLit — Crypto Analyst</h1>
           <div className="text-sm text-muted-foreground">Not financial advice</div>
         </header>
+
+        <div className="rounded border p-3 mb-4">
+          <div className="text-sm font-medium mb-1">Demo API Key (sent as x-api-key)</div>
+          <div className="flex gap-2">
+            <Input
+              placeholder="ck_xxx… (demo only)"
+              value={apiKey}
+              onChange={(e) => setApiKeyLocal(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && saveKey()}
+            />
+            <Button onClick={saveKey}>Save</Button>
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">
+            For demos only. Don't expose real production keys in a browser. We'll add a proxy later.
+          </div>
+        </div>
 
         <Card>
           <CardHeader>
@@ -292,6 +322,13 @@ export default function App() {
             )}
           </CardContent>
         </Card>
+
+        <Separator className="my-6" />
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <WatchlistCard />
+          <AlertsManager />
+        </div>
       </div>
     </div>
   );
