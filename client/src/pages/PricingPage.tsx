@@ -1,9 +1,19 @@
+import { Link } from "react-router-dom";
 import SubscribeCard from "@/components/SubscribeCard";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
 export default function PricingPage() {
   return (
     <div className="container mx-auto py-10 space-y-8">
+      <div className="flex items-center gap-4">
+        <Link to="/">
+          <Button variant="outline" size="sm">
+            ← Back to Dashboard
+          </Button>
+        </Link>
+      </div>
+      
       <h1 className="text-3xl font-bold text-center">Pricing</h1>
       <p className="text-center text-muted-foreground max-w-xl mx-auto">
         Choose the plan that fits your needs. Upgrade anytime.
