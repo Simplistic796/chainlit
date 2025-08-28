@@ -52,15 +52,18 @@ const sentry_1 = require("./observability/sentry");
 const pino_http_1 = __importDefault(require("pino-http"));
 const uuid_1 = require("uuid");
 const mw_1 = require("./api/mw");
+const dailySignals_1 = require("./jobs/backtest/dailySignals");
+const evaluator_1 = require("./jobs/alerts/evaluator");
 const app = (0, express_1.default)();
 const port = Number(process.env.PORT || 3000);
 // Initialize Sentry + logging
 (0, sentry_1.initSentry)();
 // Sentry request/tracing handlers FIRST (only if Sentry is available)
-if (process.env.SENTRY_DSN) {
-    app.use(sentry_1.Sentry.Handlers.requestHandler());
-    app.use(sentry_1.Sentry.Handlers.tracingHandler());
-}
+// TODO: Fix Sentry v10+ integration
+// if (process.env.SENTRY_DSN) {
+//   app.use(Sentry.requestHandler());
+//   app.use(Sentry.tracingHandler());
+// }
 // Request ID + pino logger
 app.use((req, _res, next) => {
     req.id = req.headers["x-request-id"] ?? (0, uuid_1.v4)();
@@ -247,6 +250,96 @@ v1.get("/consensus/:token/opinions", async (req, res) => {
         createdAt: r.createdAt,
     })));
 });
+// POST /v1/backtest/run { limit?: number }
+v1.post("/backtest/run", async (req, res) => {
+    const limit = Number(req.body?.limit || 25);
+    const { runOnce } = await Promise.resolve().then(() => __importStar(require("./jobs/backtest/dailySignals")));
+    const job = await runOnce(limit);
+    return (0, mw_1.ok)(res, { enqueued: true, jobId: job.id, limit });
+});
+// GET /v1/backtest/signals?date=YYYY-MM-DD&limit=100
+v1.get("/backtest/signals", async (req, res) => {
+    const dateStr = String(req.query.date || "").trim();
+    const limit = Number(req.query.limit || 100);
+    if (!dateStr)
+        return (0, mw_1.fail)(res, 400, "date_required");
+    const dayUTC = new Date(`${dateStr}T00:00:00.000Z`);
+    const rows = await prisma_1.prisma.signalDaily.findMany({
+        where: { date: dayUTC },
+        orderBy: [{ score: "desc" }],
+        take: Math.min(250, Math.max(1, limit)),
+    });
+    return (0, mw_1.ok)(res, rows);
+});
+// GET /v1/backtest/summary?days=30
+v1.get("/backtest/summary", async (req, res) => {
+    const days = Number(req.query.days || 30);
+    const { backtestSummary } = await Promise.resolve().then(() => __importStar(require("./lib/backtest/report")));
+    const data = await backtestSummary(Math.max(7, Math.min(120, days)));
+    return (0, mw_1.ok)(res, data);
+});
+// WATCHLIST CRUD (per API key)
+v1.get("/watchlist", async (req, res) => {
+    const key = req.apiKey;
+    const rows = await prisma_1.prisma.watchItem.findMany({ where: { apiKeyId: key.id }, orderBy: { createdAt: "desc" } });
+    return (0, mw_1.ok)(res, rows);
+});
+v1.post("/watchlist", async (req, res) => {
+    const key = req.apiKey;
+    const token = String(req.body?.token || "").trim();
+    if (!token)
+        return (0, mw_1.fail)(res, 400, "token_required");
+    try {
+        const row = await prisma_1.prisma.watchItem.upsert({
+            where: { apiKeyId_token: { apiKeyId: key.id, token } },
+            update: {},
+            create: { apiKeyId: key.id, token },
+        });
+        return (0, mw_1.ok)(res, row);
+    }
+    catch {
+        return (0, mw_1.fail)(res, 500, "watchlist_upsert_failed");
+    }
+});
+v1.delete("/watchlist/:token", async (req, res) => {
+    const key = req.apiKey;
+    const token = String(req.params.token || "");
+    await prisma_1.prisma.watchItem.deleteMany({ where: { apiKeyId: key.id, token } });
+    return (0, mw_1.ok)(res, { removed: token });
+});
+// ALERTS CRUD
+v1.get("/alerts", async (req, res) => {
+    const key = req.apiKey;
+    const rows = await prisma_1.prisma.alert.findMany({ where: { apiKeyId: key.id }, orderBy: { createdAt: "desc" } });
+    return (0, mw_1.ok)(res, rows);
+});
+v1.post("/alerts", async (req, res) => {
+    const key = req.apiKey;
+    const token = String(req.body?.token || "").trim();
+    const type = String(req.body?.type || "");
+    const condition = req.body?.condition ?? {};
+    const channel = String(req.body?.channel || "webhook");
+    const target = String(req.body?.target || "");
+    if (!token || !type || !target)
+        return (0, mw_1.fail)(res, 400, "token_type_target_required");
+    const row = await prisma_1.prisma.alert.create({ data: { apiKeyId: key.id, token, type, condition, channel, target } });
+    return (0, mw_1.ok)(res, row);
+});
+v1.patch("/alerts/:id/toggle", async (req, res) => {
+    const key = req.apiKey;
+    const id = Number(req.params.id);
+    const a = await prisma_1.prisma.alert.findFirst({ where: { id, apiKeyId: key.id } });
+    if (!a)
+        return (0, mw_1.fail)(res, 404, "alert_not_found");
+    const row = await prisma_1.prisma.alert.update({ where: { id }, data: { isActive: !a.isActive } });
+    return (0, mw_1.ok)(res, row);
+});
+v1.delete("/alerts/:id", async (req, res) => {
+    const key = req.apiKey;
+    const id = Number(req.params.id);
+    await prisma_1.prisma.alert.deleteMany({ where: { id, apiKeyId: key.id } });
+    return (0, mw_1.ok)(res, { removed: id });
+});
 // Minimal docs endpoint
 v1.get("/docs", (req, res) => {
     return (0, mw_1.ok)(res, {
@@ -257,6 +350,13 @@ v1.get("/docs", (req, res) => {
             { method: "POST", path: "/v1/debate", body: { token: "ETH", rounds: 3 } },
             { method: "GET", path: "/v1/consensus/:token" },
             { method: "GET", path: "/v1/consensus/:token/opinions?limit=12" },
+            { method: "GET", path: "/v1/watchlist" },
+            { method: "POST", path: "/v1/watchlist", body: { token: "ETH" } },
+            { method: "DELETE", path: "/v1/watchlist/:token" },
+            { method: "GET", path: "/v1/alerts" },
+            { method: "POST", path: "/v1/alerts", body: { token: "ETH", type: "consensus_flip", condition: {}, channel: "webhook", target: "https://..." } },
+            { method: "PATCH", path: "/v1/alerts/:id/toggle" },
+            { method: "DELETE", path: "/v1/alerts/:id" },
         ],
         responseEnvelope: { ok: "boolean", data: "any (on success)", error: "string (on failure)" },
         rateLimits: "Per API key; see plan. 429 on exceed.",
@@ -265,9 +365,10 @@ v1.get("/docs", (req, res) => {
 // mount under /v1
 app.use("/v1", v1);
 // Sentry error handler AFTER routes (only if Sentry is available)
-if (process.env.SENTRY_DSN) {
-    app.use(sentry_1.Sentry.Handlers.errorHandler());
-}
+// TODO: Fix Sentry v10+ integration
+// if (process.env.SENTRY_DSN) {
+//   app.use(Sentry.errorHandler() as ErrorRequestHandler);
+// }
 // Final error handler
 app.use((err, _req, res, _next) => {
     logger_1.logger.error({ err }, "unhandled error");
@@ -281,5 +382,15 @@ process.on("uncaughtException", (err) => {
 });
 app.listen(port, () => {
     logger_1.logger.info(`Listening on port ${port}`);
+    // Initialize backtest scheduler and worker
+    (0, dailySignals_1.scheduleDaily)(100).catch((err) => {
+        logger_1.logger.warn({ err }, "Failed to schedule daily backtest job");
+    });
+    // Initialize alert evaluator scheduler
+    (0, evaluator_1.scheduleAlertEvaluator)().catch((err) => {
+        logger_1.logger.warn({ err }, "Failed to schedule alert evaluator job");
+    });
+    logger_1.logger.info("Backtest worker started and listening for jobs");
+    logger_1.logger.info("Alert evaluator started and scheduled every 5 minutes");
 });
 //# sourceMappingURL=index.js.map

@@ -68,6 +68,9 @@ model ApiKey {
   updatedAt    DateTime  @updatedAt
 
   usages       ApiUsage[]
+  watchItems   WatchItem[]
+  alerts       Alert[]
+  alertEvents  AlertEvent[]
 }
 
 model ApiUsage {
@@ -96,4 +99,46 @@ model SignalDaily {
 
   @@unique([date, token])
   @@index([date, decision])
+}
+
+model WatchItem {
+  id        Int      @id @default(autoincrement())
+  apiKeyId  Int
+  token     String
+  createdAt DateTime @default(now())
+  apiKey    ApiKey   @relation(fields: [apiKeyId], references: [id])
+
+  @@unique([apiKeyId, token])
+  @@index([apiKeyId, createdAt])
+}
+
+model Alert {
+  id         Int      @id @default(autoincrement())
+  apiKeyId   Int
+  token      String
+  type       String   // "consensus_flip" | "score_threshold" | "risk_change"
+  condition  Json     // e.g. {"from": "SELL", "to": "BUY"} or {"scoreGte": 75}
+  channel    String   // "webhook" | "email"
+  target     String   // webhook URL or email address
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  apiKey     ApiKey   @relation(fields: [apiKeyId], references: [id])
+  alertEvents AlertEvent[]
+
+  @@index([apiKeyId, token])
+}
+
+model AlertEvent {
+  id         Int      @id @default(autoincrement())
+  alertId    Int
+  apiKeyId   Int
+  token      String
+  payload    Json
+  delivered  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  alert      Alert    @relation(fields: [alertId], references: [id])
+  apiKey     ApiKey   @relation(fields: [apiKeyId], references: [id])
+
+  @@index([apiKeyId, createdAt])
 }

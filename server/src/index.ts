@@ -17,6 +17,7 @@ import pinoHttp from "pino-http";
 import { v4 as uuidv4 } from "uuid";
 import { apiAuth, logApiUsage, ok, fail } from "./api/mw";
 import { scheduleDaily, dailyWorker } from "./jobs/backtest/dailySignals";
+import { scheduleAlertEvaluator } from "./jobs/alerts/evaluator";
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -258,6 +259,69 @@ v1.get("/backtest/summary", async (req, res) => {
   return ok(res, data);
 });
 
+// WATCHLIST CRUD (per API key)
+v1.get("/watchlist", async (req, res) => {
+  const key = (req as any).apiKey;
+  const rows = await prisma.watchItem.findMany({ where: { apiKeyId: key.id }, orderBy: { createdAt: "desc" } });
+  return ok(res, rows);
+});
+
+v1.post("/watchlist", async (req, res) => {
+  const key = (req as any).apiKey;
+  const token = String(req.body?.token || "").trim();
+  if (!token) return fail(res, 400, "token_required");
+  try {
+    const row = await prisma.watchItem.upsert({
+      where: { apiKeyId_token: { apiKeyId: key.id, token } },
+      update: {},
+      create: { apiKeyId: key.id, token },
+    });
+    return ok(res, row);
+  } catch { return fail(res, 500, "watchlist_upsert_failed"); }
+});
+
+v1.delete("/watchlist/:token", async (req, res) => {
+  const key = (req as any).apiKey;
+  const token = String(req.params.token || "");
+  await prisma.watchItem.deleteMany({ where: { apiKeyId: key.id, token } });
+  return ok(res, { removed: token });
+});
+
+// ALERTS CRUD
+v1.get("/alerts", async (req, res) => {
+  const key = (req as any).apiKey;
+  const rows = await prisma.alert.findMany({ where: { apiKeyId: key.id }, orderBy: { createdAt: "desc" } });
+  return ok(res, rows);
+});
+
+v1.post("/alerts", async (req, res) => {
+  const key = (req as any).apiKey;
+  const token = String(req.body?.token || "").trim();
+  const type = String(req.body?.type || "");
+  const condition = req.body?.condition ?? {};
+  const channel = String(req.body?.channel || "webhook");
+  const target = String(req.body?.target || "");
+  if (!token || !type || !target) return fail(res, 400, "token_type_target_required");
+  const row = await prisma.alert.create({ data: { apiKeyId: key.id, token, type, condition, channel, target } });
+  return ok(res, row);
+});
+
+v1.patch("/alerts/:id/toggle", async (req, res) => {
+  const key = (req as any).apiKey;
+  const id = Number(req.params.id);
+  const a = await prisma.alert.findFirst({ where: { id, apiKeyId: key.id } });
+  if (!a) return fail(res, 404, "alert_not_found");
+  const row = await prisma.alert.update({ where: { id }, data: { isActive: !a.isActive } });
+  return ok(res, row);
+});
+
+v1.delete("/alerts/:id", async (req, res) => {
+  const key = (req as any).apiKey;
+  const id = Number(req.params.id);
+  await prisma.alert.deleteMany({ where: { id, apiKeyId: key.id } });
+  return ok(res, { removed: id });
+});
+
 // Minimal docs endpoint
 v1.get("/docs", (req, res) => {
   return ok(res, {
@@ -268,6 +332,13 @@ v1.get("/docs", (req, res) => {
       { method: "POST", path: "/v1/debate", body: { token: "ETH", rounds: 3 } },
       { method: "GET", path: "/v1/consensus/:token" },
       { method: "GET", path: "/v1/consensus/:token/opinions?limit=12" },
+      { method: "GET", path: "/v1/watchlist" },
+      { method: "POST", path: "/v1/watchlist", body: { token: "ETH" } },
+      { method: "DELETE", path: "/v1/watchlist/:token" },
+      { method: "GET", path: "/v1/alerts" },
+      { method: "POST", path: "/v1/alerts", body: { token: "ETH", type: "consensus_flip", condition: {}, channel: "webhook", target: "https://..." } },
+      { method: "PATCH", path: "/v1/alerts/:id/toggle" },
+      { method: "DELETE", path: "/v1/alerts/:id" },
     ],
     responseEnvelope: { ok: "boolean", data: "any (on success)", error: "string (on failure)" },
     rateLimits: "Per API key; see plan. 429 on exceed.",
@@ -304,5 +375,11 @@ app.listen(port, () => {
     logger.warn({ err }, "Failed to schedule daily backtest job");
   });
   
+  // Initialize alert evaluator scheduler
+  scheduleAlertEvaluator().catch((err) => {
+    logger.warn({ err }, "Failed to schedule alert evaluator job");
+  });
+  
   logger.info("Backtest worker started and listening for jobs");
+  logger.info("Alert evaluator started and scheduled every 5 minutes");
 });
