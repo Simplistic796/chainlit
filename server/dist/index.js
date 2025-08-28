@@ -37,6 +37,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 // src/index.ts
+require("dotenv/config");
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const helmet_1 = __importDefault(require("helmet"));
@@ -52,6 +53,7 @@ const sentry_1 = require("./observability/sentry");
 const pino_http_1 = __importDefault(require("pino-http"));
 const uuid_1 = require("uuid");
 const mw_1 = require("./api/mw");
+const uiKey_1 = require("./api/uiKey");
 const dailySignals_1 = require("./jobs/backtest/dailySignals");
 const evaluator_1 = require("./jobs/alerts/evaluator");
 const app = (0, express_1.default)();
@@ -194,6 +196,21 @@ app.get("/consensus/:token/opinions", async (req, res) => {
 const v1 = express_1.default.Router();
 // secure all v1 endpoints
 v1.use(mw_1.apiAuth, mw_1.logApiUsage);
+// UI Routes (server-owned, no auth header needed)
+const ui = express_1.default.Router();
+// attach the demo ApiKey object to req (like apiAuth would do)
+ui.use(async (req, res, next) => {
+    try {
+        req.apiKey = await (0, uiKey_1.getUiApiKey)();
+        next();
+    }
+    catch (e) {
+        console.error("UI key error:", e);
+        return res.status(500).json({ ok: false, error: "ui_key_missing" });
+    }
+});
+// Optional: record usage for analytics
+ui.use(mw_1.logApiUsage);
 // GET /v1/health (authed variant)
 v1.get("/health", (req, res) => (0, mw_1.ok)(res, { status: "ok" }));
 // /v1/analyze?token=...
@@ -362,6 +379,65 @@ v1.get("/docs", (req, res) => {
         rateLimits: "Per API key; see plan. 429 on exceed.",
     });
 });
+// --- UI Routes (same bodies as /v1) ---
+ui.get("/watchlist", async (req, res) => {
+    const key = req.apiKey;
+    const rows = await prisma_1.prisma.watchItem.findMany({ where: { apiKeyId: key.id }, orderBy: { createdAt: "desc" } });
+    return (0, mw_1.ok)(res, rows);
+});
+ui.post("/watchlist", async (req, res) => {
+    const key = req.apiKey;
+    const token = String(req.body?.token || "").trim();
+    if (!token)
+        return (0, mw_1.fail)(res, 400, "token_required");
+    const row = await prisma_1.prisma.watchItem.upsert({
+        where: { apiKeyId_token: { apiKeyId: key.id, token } },
+        update: {},
+        create: { apiKeyId: key.id, token },
+    });
+    return (0, mw_1.ok)(res, row);
+});
+ui.delete("/watchlist/:token", async (req, res) => {
+    const key = req.apiKey;
+    const token = String(req.params.token || "");
+    await prisma_1.prisma.watchItem.deleteMany({ where: { apiKeyId: key.id, token } });
+    return (0, mw_1.ok)(res, { removed: token });
+});
+// --- Alerts (same bodies as /v1) ---
+ui.get("/alerts", async (req, res) => {
+    const key = req.apiKey;
+    const rows = await prisma_1.prisma.alert.findMany({ where: { apiKeyId: key.id }, orderBy: { createdAt: "desc" } });
+    return (0, mw_1.ok)(res, rows);
+});
+ui.post("/alerts", async (req, res) => {
+    const key = req.apiKey;
+    const token = String(req.body?.token || "").trim();
+    const type = String(req.body?.type || "");
+    const condition = req.body?.condition ?? {};
+    const channel = String(req.body?.channel || "webhook");
+    const target = String(req.body?.target || "");
+    if (!token || !type || !target)
+        return (0, mw_1.fail)(res, 400, "token_type_target_required");
+    const row = await prisma_1.prisma.alert.create({ data: { apiKeyId: key.id, token, type, condition, channel, target } });
+    return (0, mw_1.ok)(res, row);
+});
+ui.patch("/alerts/:id/toggle", async (req, res) => {
+    const key = req.apiKey;
+    const id = Number(req.params.id);
+    const a = await prisma_1.prisma.alert.findFirst({ where: { id, apiKeyId: key.id } });
+    if (!a)
+        return (0, mw_1.fail)(res, 404, "alert_not_found");
+    const row = await prisma_1.prisma.alert.update({ where: { id }, data: { isActive: !a.isActive } });
+    return (0, mw_1.ok)(res, row);
+});
+ui.delete("/alerts/:id", async (req, res) => {
+    const key = req.apiKey;
+    const id = Number(req.params.id);
+    await prisma_1.prisma.alert.deleteMany({ where: { id, apiKeyId: key.id } });
+    return (0, mw_1.ok)(res, { removed: id });
+});
+// mount under /ui
+app.use("/ui", ui);
 // mount under /v1
 app.use("/v1", v1);
 // Sentry error handler AFTER routes (only if Sentry is available)

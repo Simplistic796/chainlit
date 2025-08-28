@@ -11,6 +11,7 @@ import ScoreDial from "@/components/ScoreDial";
 import AgentChip from "@/components/AgentChip";
 import WatchlistCard from "@/components/WatchlistCard";
 import AlertsManager from "@/components/AlertsManager";
+import SubscribeCard from "@/components/SubscribeCard";
 
 
 type AnalysisResult = {
@@ -302,9 +303,10 @@ export default function App() {
 
         <Separator className="my-6" />
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-3">
           <WatchlistCard />
           <AlertsManager />
+          <SubscribeCard />
         </div>
       </div>
     </div>

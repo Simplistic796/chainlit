@@ -3,6 +3,7 @@ import "dotenv/config";
 import express from "express";
 import type { Request, Response, NextFunction, ErrorRequestHandler } from "express";
 import cors from "cors";
+import bodyParser from "body-parser";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
@@ -62,6 +63,10 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
 });
 app.use(apiLimiter);
+
+// Stripe webhook MUST receive the raw body. Mount BEFORE express.json.
+import { stripeWebhook } from "./api/stripeWebhook";
+app.post("/webhooks/stripe", bodyParser.raw({ type: "application/json" }), stripeWebhook);
 
 app.use(express.json());
 
@@ -179,6 +184,26 @@ const v1 = express.Router();
 
 // secure all v1 endpoints
 v1.use(apiAuth, logApiUsage);
+// --- Stripe checkout route (subscription) ---
+import Stripe from "stripe";
+const stripe = new Stripe(String(process.env.STRIPE_SECRET_KEY || ""), { apiVersion: "2024-06-20" });
+
+v1.post("/checkout", async (req, res) => {
+  const email = String(req.body?.email || "").trim();
+  if (!email) return fail(res, 400, "email_required");
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      customer_email: email,
+      line_items: [{ price: String(process.env.STRIPE_PRICE_ID || ""), quantity: 1 }],
+      success_url: String(process.env.FRONTEND_SUCCESS_URL || "http://localhost:5173/success?session_id={CHECKOUT_SESSION_ID}"),
+      cancel_url: String(process.env.FRONTEND_CANCEL_URL || "http://localhost:5173/cancel"),
+    });
+    return ok(res, { url: session.url });
+  } catch (e: any) {
+    return fail(res, 500, "stripe_error", e.message);
+  }
+});
 
 // UI Routes (server-owned, no auth header needed)
 const ui = express.Router();
@@ -455,6 +480,8 @@ app.use("/ui", ui);
 
 // mount under /v1
 app.use("/v1", v1);
+
+// (webhook mounted above)
 
 // Sentry error handler AFTER routes (only if Sentry is available)
 // TODO: Fix Sentry v10+ integration

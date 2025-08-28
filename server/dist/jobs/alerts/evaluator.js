@@ -9,7 +9,7 @@ const bullmq_1 = require("bullmq");
 const redis_1 = require("../../cache/redis");
 const prisma_1 = require("../../db/prisma");
 const node_fetch_1 = __importDefault(require("node-fetch"));
-const connection = (0, redis_1.getRedis)();
+const connection = (0, redis_1.getRedisForBullMQ)();
 exports.alertsQueue = new bullmq_1.Queue("alerts.eval", { connection: connection });
 async function notifyWebhook(url, payload) {
     try {
