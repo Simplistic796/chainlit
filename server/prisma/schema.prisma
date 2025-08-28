@@ -8,6 +8,18 @@ generator client {
   provider = "prisma-client-js"
 }
 
+model User {
+  id               Int       @id @default(autoincrement())
+  email            String    @unique
+  plan             String    @default("free") // "free" | "pro" | "enterprise"
+  stripeCustomerId String?   @unique
+  stripeSubId      String?   @unique
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  apiKeys          ApiKey[]
+}
+
 model TokenLookup {
   id        Int      @id @default(autoincrement())
   token     String
@@ -57,20 +69,24 @@ model BacktestRun {
 }
 
 model ApiKey {
-  id           Int       @id @default(autoincrement())
-  name         String
-  keyHash      String    // hash of the API key
-  plan         String    // "free" | "pro" | "enterprise"
-  requestsPerMin Int     @default(60)
-  requestsPerDay Int     @default(5000)
-  isActive     Boolean   @default(true)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id             Int       @id @default(autoincrement())
+  name           String
+  keyHash        String    // hash of the API key
+  plan           String    // keep for now; we'll sync from user.plan
+  requestsPerMin Int       @default(60)
+  requestsPerDay Int       @default(5000)
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  usages       ApiUsage[]
-  watchItems   WatchItem[]
-  alerts       Alert[]
-  alertEvents  AlertEvent[]
+  // NEW: owner
+  userId         Int?
+  user           User?     @relation(fields: [userId], references: [id])
+
+  usages         ApiUsage[]
+  watchItems     WatchItem[]
+  alerts         Alert[]
+  alertEvents    AlertEvent[]
 }
 
 model ApiUsage {

@@ -40,6 +40,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 require("dotenv/config");
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
+const body_parser_1 = __importDefault(require("body-parser"));
 const helmet_1 = __importDefault(require("helmet"));
 const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const zod_1 = require("zod");
@@ -53,13 +54,17 @@ const sentry_1 = require("./observability/sentry");
 const pino_http_1 = __importDefault(require("pino-http"));
 const uuid_1 = require("uuid");
 const mw_1 = require("./api/mw");
-const uiKey_1 = require("./api/uiKey");
 const dailySignals_1 = require("./jobs/backtest/dailySignals");
 const evaluator_1 = require("./jobs/alerts/evaluator");
 const app = (0, express_1.default)();
 const port = Number(process.env.PORT || 3000);
 // Initialize Sentry + logging
 (0, sentry_1.initSentry)();
+// Debug environment variables
+console.log("Environment check:");
+console.log("DEMO_API_KEY:", process.env.DEMO_API_KEY ? "SET" : "NOT SET");
+console.log("NODE_ENV:", process.env.NODE_ENV);
+console.log("DATABASE_URL:", process.env.DATABASE_URL ? "SET" : "NOT SET");
 // Sentry request/tracing handlers FIRST (only if Sentry is available)
 // TODO: Fix Sentry v10+ integration
 // if (process.env.SENTRY_DSN) {
@@ -85,6 +90,9 @@ const apiLimiter = (0, express_rate_limit_1.default)({
     legacyHeaders: false,
 });
 app.use(apiLimiter);
+// Stripe webhook MUST receive the raw body. Mount BEFORE express.json.
+const stripeWebhook_1 = require("./api/stripeWebhook");
+app.post("/webhooks/stripe", body_parser_1.default.raw({ type: "application/json" }), stripeWebhook_1.stripeWebhook);
 app.use(express_1.default.json());
 app.get("/health", (req, res) => {
     res.send("Server is running 🚀");
@@ -196,12 +204,51 @@ app.get("/consensus/:token/opinions", async (req, res) => {
 const v1 = express_1.default.Router();
 // secure all v1 endpoints
 v1.use(mw_1.apiAuth, mw_1.logApiUsage);
+// --- Stripe checkout route (subscription) ---
+const stripe_1 = __importDefault(require("stripe"));
+const stripe = new stripe_1.default(String(process.env.STRIPE_SECRET_KEY || ""), { apiVersion: "2025-08-27.basil" });
+v1.post("/checkout", async (req, res) => {
+    const email = String(req.body?.email || "").trim();
+    if (!email)
+        return (0, mw_1.fail)(res, 400, "email_required");
+    try {
+        const session = await stripe.checkout.sessions.create({
+            mode: "subscription",
+            customer_email: email,
+            line_items: [{ price: String(process.env.STRIPE_PRICE_ID || ""), quantity: 1 }],
+            success_url: String(process.env.FRONTEND_SUCCESS_URL || "http://localhost:5173/success?session_id={CHECKOUT_SESSION_ID}"),
+            cancel_url: String(process.env.FRONTEND_CANCEL_URL || "http://localhost:5173/cancel"),
+        });
+        return (0, mw_1.ok)(res, { url: session.url });
+    }
+    catch (e) {
+        return (0, mw_1.fail)(res, 500, "stripe_error", e.message);
+    }
+});
 // UI Routes (server-owned, no auth header needed)
 const ui = express_1.default.Router();
 // attach the demo ApiKey object to req (like apiAuth would do)
 ui.use(async (req, res, next) => {
     try {
-        req.apiKey = await (0, uiKey_1.getUiApiKey)();
+        // Inline uiKey logic to avoid import issues
+        let cached = null;
+        if (cached) {
+            req.apiKey = cached;
+            return next();
+        }
+        const raw = process.env.DEMO_API_KEY || "";
+        console.log("DEMO_API_KEY:", raw ? "SET" : "NOT SET");
+        if (!raw)
+            throw new Error("DEMO_API_KEY not set");
+        const { hashKey } = await Promise.resolve().then(() => __importStar(require("./api/auth")));
+        const keyHash = hashKey(raw);
+        console.log("Looking for key hash:", keyHash);
+        const key = await prisma_1.prisma.apiKey.findFirst({ where: { keyHash, isActive: true } });
+        if (!key)
+            throw new Error("DEMO_API_KEY hash not found in DB (make sure you created the key)");
+        console.log("Found API key:", key.id);
+        cached = key;
+        req.apiKey = key;
         next();
     }
     catch (e) {
@@ -211,6 +258,15 @@ ui.use(async (req, res, next) => {
 });
 // Optional: record usage for analytics
 ui.use(mw_1.logApiUsage);
+// GET /ui/account - returns current user's plan
+ui.get("/account", async (req, res) => {
+    const key = req.apiKey; // this is the DEMO key holder user
+    if (!key?.id)
+        return res.status(500).json({ ok: false, error: "ui_key_missing" });
+    const fullKey = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+    const plan = fullKey?.user?.plan ?? fullKey?.plan ?? "free";
+    return (0, mw_1.ok)(res, { plan, email: fullKey?.user?.email ?? null });
+});
 // GET /v1/health (authed variant)
 v1.get("/health", (req, res) => (0, mw_1.ok)(res, { status: "ok" }));
 // /v1/analyze?token=...
@@ -440,6 +496,7 @@ ui.delete("/alerts/:id", async (req, res) => {
 app.use("/ui", ui);
 // mount under /v1
 app.use("/v1", v1);
+// (webhook mounted above)
 // Sentry error handler AFTER routes (only if Sentry is available)
 // TODO: Fix Sentry v10+ integration
 // if (process.env.SENTRY_DSN) {

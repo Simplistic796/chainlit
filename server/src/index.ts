@@ -186,7 +186,7 @@ const v1 = express.Router();
 v1.use(apiAuth, logApiUsage);
 // --- Stripe checkout route (subscription) ---
 import Stripe from "stripe";
-const stripe = new Stripe(String(process.env.STRIPE_SECRET_KEY || ""), { apiVersion: "2024-06-20" });
+const stripe = new Stripe(String(process.env.STRIPE_SECRET_KEY || ""), { apiVersion: "2025-08-27.basil" });
 
 v1.post("/checkout", async (req, res) => {
   const email = String(req.body?.email || "").trim();
@@ -241,6 +241,15 @@ ui.use(async (req, res, next) => {
 
 // Optional: record usage for analytics
 ui.use(logApiUsage);
+
+// GET /ui/account - returns current user's plan
+ui.get("/account", async (req, res) => {
+  const key = (req as any).apiKey; // this is the DEMO key holder user
+  if (!key?.id) return res.status(500).json({ ok:false, error:"ui_key_missing" });
+  const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+  const plan = fullKey?.user?.plan ?? fullKey?.plan ?? "free";
+  return ok(res, { plan, email: fullKey?.user?.email ?? null });
+});
 
 // GET /v1/health (authed variant)
 v1.get("/health", (req, res) => ok(res, { status: "ok" }));

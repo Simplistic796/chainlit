@@ -9,6 +9,7 @@ export declare function findApiKey(rawKey: string): Promise<{
     requestsPerDay: number;
     isActive: boolean;
     updatedAt: Date;
+    userId: number | null;
 } | null>;
 /** Generate a new raw key (returns {raw, hash}) — store hash only! */
 export declare function generateRawKey(): {
