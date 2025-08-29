@@ -186,9 +186,10 @@ const v1 = express.Router();
 v1.use(apiAuth, logApiUsage);
 // --- Stripe checkout route (subscription) ---
 import Stripe from "stripe";
-const stripe = new Stripe(String(process.env.STRIPE_SECRET_KEY || ""), { apiVersion: "2025-08-27.basil" });
+const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2025-08-27.basil" }) : null;
 
 v1.post("/checkout", async (req, res) => {
+  if (!stripe) return fail(res, 500, "stripe_not_configured");
   const email = String(req.body?.email || "").trim();
   if (!email) return fail(res, 400, "email_required");
   try {
@@ -484,6 +485,55 @@ ui.delete("/alerts/:id", async (req, res) => {
   return ok(res, { removed: id });
 });
 
+// --- Portfolio endpoints ---
+// Get or create demo user's single portfolio
+ui.get("/portfolio", async (req, res) => {
+  const key = (req as any).apiKey;
+  const k = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+  if (!k?.user) return fail(res, 500, "demo_user_missing");
+
+  let p = await prisma.portfolio.findFirst({ where: { userId: k.user.id } });
+  if (!p) {
+    p = await prisma.portfolio.create({ data: { userId: k.user.id, name: "My Portfolio" } });
+  }
+  const holdings = await prisma.holding.findMany({ where: { portfolioId: p.id }, orderBy: { token: "asc" } });
+  return ok(res, { portfolio: p, holdings });
+});
+
+// Upsert holding (add or update weight)
+ui.post("/portfolio/holdings", async (req, res) => {
+  const token = String(req.body?.token || "").trim().toUpperCase();
+  const weight = Number(req.body?.weight);
+  if (!token || !Number.isFinite(weight) || weight < 0 || weight > 1) return fail(res, 400, "token_and_weight_required");
+
+  const key = (req as any).apiKey;
+  const k = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+  if (!k?.user) return fail(res, 500, "demo_user_missing");
+
+  let p = await prisma.portfolio.findFirst({ where: { userId: k.user.id } });
+  if (!p) p = await prisma.portfolio.create({ data: { userId: k.user.id, name: "My Portfolio" } });
+
+  const row = await prisma.holding.upsert({
+    where: { portfolioId_token: { portfolioId: p.id, token } },
+    update: { weight },
+    create: { portfolioId: p.id, token, weight },
+  });
+  return ok(res, row);
+});
+
+// Remove holding
+ui.delete("/portfolio/holdings/:token", async (req, res) => {
+  const token = String(req.params.token || "").toUpperCase();
+  const key = (req as any).apiKey;
+  const k = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+  if (!k?.user) return fail(res, 500, "demo_user_missing");
+  const p = await prisma.portfolio.findFirst({ where: { userId: k.user.id } });
+  if (!p) return ok(res, { removed: 0 });
+
+  const r = await prisma.holding.deleteMany({ where: { portfolioId: p.id, token } });
+  return ok(res, { removed: r.count });
+});
+
 // mount under /ui
 app.use("/ui", ui);
 
@@ -514,16 +564,17 @@ process.on("uncaughtException", (err) => {
 app.listen(port, () => {
   logger.info(`Listening on port ${port}`);
   
+  // Temporarily disabled for debugging
   // Initialize backtest scheduler and worker
-  scheduleDaily(100).catch((err) => {
-    logger.warn({ err }, "Failed to schedule daily backtest job");
-  });
+  // scheduleDaily(100).catch((err) => {
+  //   logger.warn({ err }, "Failed to schedule daily backtest job");
+  // });
   
   // Initialize alert evaluator scheduler
-  scheduleAlertEvaluator().catch((err) => {
-    logger.warn({ err }, "Failed to schedule alert evaluator job");
-  });
+  // scheduleAlertEvaluator().catch((err) => {
+  //   logger.warn({ err }, "Failed to schedule alert evaluator job");
+  // });
   
-  logger.info("Backtest worker started and listening for jobs");
-  logger.info("Alert evaluator started and scheduled every 5 minutes");
+  // logger.info("Backtest worker started and listening for jobs");
+  // logger.info("Alert evaluator started and scheduled every 5 minutes");
 });

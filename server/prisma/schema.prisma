@@ -1,9 +1,13 @@
-// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
+<<<<<<< HEAD
 generator client {
   provider = "prisma-client-js"
 }
@@ -20,6 +24,8 @@ model User {
   apiKeys          ApiKey[]
 }
 
+=======
+>>>>>>> master
 model TokenLookup {
   id        Int      @id @default(autoincrement())
   token     String
@@ -33,42 +39,43 @@ model TokenLookup {
 }
 
 model AgentRun {
-  id          Int      @id @default(autoincrement())
-  token       String
-  agentType   String   // "sentiment" | "valuation" | "risk"
-  inputsJSON  Json
-  outputJSON  Json
-  score       Float?
-  confidence  Float?
-  createdAt   DateTime @default(now())
+  id         Int      @id @default(autoincrement())
+  token      String
+  agentType  String
+  inputsJSON Json
+  outputJSON Json
+  score      Float?
+  confidence Float?
+  createdAt  DateTime @default(now())
 
   @@index([token, createdAt])
   @@index([agentType, createdAt])
 }
 
 model ConsensusRun {
-  id           Int      @id @default(autoincrement())
-  token        String
-  decision     String   // "BUY" | "HOLD" | "SELL"
-  confidence   Float
+  id            Int      @id @default(autoincrement())
+  token         String
+  decision      String
+  confidence    Float
   rationaleJSON Json
-  createdAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
 
   @@index([token, createdAt])
 }
 
 model BacktestRun {
   id           Int      @id @default(autoincrement())
-  windowDays   Int
-  universeSize Int
   pnl          Float
   sharpe       Float
   maxDrawdown  Float
   detailsJSON  Json
   createdAt    DateTime @default(now())
+  universeSize Int
+  windowDays   Int
 }
 
 model ApiKey {
+<<<<<<< HEAD
   id             Int       @id @default(autoincrement())
   name           String
   keyHash        String    // hash of the API key
@@ -87,31 +94,47 @@ model ApiKey {
   watchItems     WatchItem[]
   alerts         Alert[]
   alertEvents    AlertEvent[]
+=======
+  id             Int          @id @default(autoincrement())
+  name           String
+  keyHash        String
+  plan           String
+  requestsPerMin Int          @default(60)
+  requestsPerDay Int          @default(5000)
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  userId         Int?
+  alerts         Alert[]
+  alertEvents    AlertEvent[]
+  user           User?        @relation(fields: [userId], references: [id])
+  usages         ApiUsage[]
+  watchItems     WatchItem[]
+>>>>>>> master
 }
 
 model ApiUsage {
-  id         Int      @id @default(autoincrement())
-  apiKeyId   Int
-  endpoint   String
-  status     Int
-  createdAt  DateTime @default(now())
-
-  apiKey     ApiKey   @relation(fields: [apiKeyId], references: [id])
+  id        Int      @id @default(autoincrement())
+  apiKeyId  Int
+  endpoint  String
+  status    Int
+  createdAt DateTime @default(now())
+  apiKey    ApiKey   @relation(fields: [apiKeyId], references: [id])
 
   @@index([apiKeyId, createdAt])
 }
 
 model SignalDaily {
-  id          Int      @id @default(autoincrement())
-  date        DateTime // UTC day (truncate to 00:00:00Z)
-  token       String
-  score       Int
-  risk        String
-  outlook     String
-  decision    String   // BUY | HOLD | SELL
-  confidence  Float
-  priceUsd    Float
-  createdAt   DateTime @default(now())
+  id         Int      @id @default(autoincrement())
+  date       DateTime
+  token      String
+  score      Int
+  risk       String
+  outlook    String
+  decision   String
+  confidence Float
+  priceUsd   Float
+  createdAt  DateTime @default(now())
 
   @@unique([date, token])
   @@index([date, decision])
@@ -129,32 +152,65 @@ model WatchItem {
 }
 
 model Alert {
-  id         Int      @id @default(autoincrement())
-  apiKeyId   Int
-  token      String
-  type       String   // "consensus_flip" | "score_threshold" | "risk_change"
-  condition  Json     // e.g. {"from": "SELL", "to": "BUY"} or {"scoreGte": 75}
-  channel    String   // "webhook" | "email"
-  target     String   // webhook URL or email address
-  isActive   Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  apiKey     ApiKey   @relation(fields: [apiKeyId], references: [id])
+  id          Int          @id @default(autoincrement())
+  apiKeyId    Int
+  token       String
+  type        String
+  condition   Json
+  channel     String
+  target      String
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  apiKey      ApiKey       @relation(fields: [apiKeyId], references: [id])
   alertEvents AlertEvent[]
 
   @@index([apiKeyId, token])
 }
 
 model AlertEvent {
-  id         Int      @id @default(autoincrement())
-  alertId    Int
-  apiKeyId   Int
-  token      String
-  payload    Json
-  delivered  Boolean  @default(false)
-  createdAt  DateTime @default(now())
-
-  alert      Alert    @relation(fields: [alertId], references: [id])
-  apiKey     ApiKey   @relation(fields: [apiKeyId], references: [id])
+  id        Int      @id @default(autoincrement())
+  alertId   Int
+  apiKeyId  Int
+  token     String
+  payload   Json
+  delivered Boolean  @default(false)
+  createdAt DateTime @default(now())
+  alert     Alert    @relation(fields: [alertId], references: [id])
+  apiKey    ApiKey   @relation(fields: [apiKeyId], references: [id])
 
   @@index([apiKeyId, createdAt])
+}
+
+model User {
+  id               Int         @id @default(autoincrement())
+  email            String      @unique
+  plan             String      @default("free")
+  stripeCustomerId String?     @unique
+  stripeSubId      String?     @unique
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  apiKeys          ApiKey[]
+  portfolios       Portfolio[]
+}
+
+model Portfolio {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  name      String    @default("My Portfolio")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  holdings  Holding[]
+  user      User      @relation(fields: [userId], references: [id])
+}
+
+model Holding {
+  id          Int       @id @default(autoincrement())
+  portfolioId Int
+  token       String
+  weight      Float
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  portfolio   Portfolio @relation(fields: [portfolioId], references: [id])
+
+  @@unique([portfolioId, token])
 }

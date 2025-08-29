@@ -12,6 +12,8 @@ import AgentChip from "@/components/AgentChip";
 import WatchlistCard from "@/components/WatchlistCard";
 import AlertsManager from "@/components/AlertsManager";
 import NavBar from "@/components/NavBar";
+import SubscribeCard from "@/components/SubscribeCard";
+import PortfolioCard from "@/components/PortfolioCard";
 
 
 type AnalysisResult = {
@@ -307,6 +309,10 @@ export default function App() {
         <div className="grid gap-4 md:grid-cols-2">
           <WatchlistCard />
           <AlertsManager />
+        </div>
+
+        <div className="mt-6">
+          <PortfolioCard />
         </div>
       </div>
     </div>
