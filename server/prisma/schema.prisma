@@ -1,31 +1,13 @@
-generator client {
-  provider = "prisma-client-js"
-}
-
+// prisma/schema.prisma
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-<<<<<<< HEAD
 generator client {
   provider = "prisma-client-js"
 }
 
-model User {
-  id               Int       @id @default(autoincrement())
-  email            String    @unique
-  plan             String    @default("free") // "free" | "pro" | "enterprise"
-  stripeCustomerId String?   @unique
-  stripeSubId      String?   @unique
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-
-  apiKeys          ApiKey[]
-}
-
-=======
->>>>>>> master
 model TokenLookup {
   id        Int      @id @default(autoincrement())
   token     String
@@ -74,27 +56,19 @@ model BacktestRun {
   windowDays   Int
 }
 
+model User {
+  id               Int         @id @default(autoincrement())
+  email            String      @unique
+  plan             String      @default("free")
+  stripeCustomerId String?     @unique
+  stripeSubId      String?     @unique
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  apiKeys          ApiKey[]
+  portfolios       Portfolio[]
+}
+
 model ApiKey {
-<<<<<<< HEAD
-  id             Int       @id @default(autoincrement())
-  name           String
-  keyHash        String    // hash of the API key
-  plan           String    // keep for now; we'll sync from user.plan
-  requestsPerMin Int       @default(60)
-  requestsPerDay Int       @default(5000)
-  isActive       Boolean   @default(true)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-
-  // NEW: owner
-  userId         Int?
-  user           User?     @relation(fields: [userId], references: [id])
-
-  usages         ApiUsage[]
-  watchItems     WatchItem[]
-  alerts         Alert[]
-  alertEvents    AlertEvent[]
-=======
   id             Int          @id @default(autoincrement())
   name           String
   keyHash        String
@@ -110,7 +84,6 @@ model ApiKey {
   user           User?        @relation(fields: [userId], references: [id])
   usages         ApiUsage[]
   watchItems     WatchItem[]
->>>>>>> master
 }
 
 model ApiUsage {
@@ -179,18 +152,6 @@ model AlertEvent {
   apiKey    ApiKey   @relation(fields: [apiKeyId], references: [id])
 
   @@index([apiKeyId, createdAt])
-}
-
-model User {
-  id               Int         @id @default(autoincrement())
-  email            String      @unique
-  plan             String      @default("free")
-  stripeCustomerId String?     @unique
-  stripeSubId      String?     @unique
-  createdAt        DateTime    @default(now())
-  updatedAt        DateTime    @updatedAt
-  apiKeys          ApiKey[]
-  portfolios       Portfolio[]
 }
 
 model Portfolio {
