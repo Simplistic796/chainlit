@@ -1,11 +1,13 @@
 import type { Request, Response } from "express";
 import Stripe from "stripe";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
+const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY, {
 	apiVersion: "2025-08-27.basil",
-});
+}) : null;
 
 export async function stripeWebhook(req: Request, res: Response) {
+	if (!stripe) return res.status(500).send("Stripe not configured");
+	
 	const signature = req.headers["stripe-signature"] as string | undefined;
 	if (!signature) return res.status(400).send("Missing sig");
 

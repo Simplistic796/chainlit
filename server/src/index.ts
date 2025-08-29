@@ -186,9 +186,10 @@ const v1 = express.Router();
 v1.use(apiAuth, logApiUsage);
 // --- Stripe checkout route (subscription) ---
 import Stripe from "stripe";
-const stripe = new Stripe(String(process.env.STRIPE_SECRET_KEY || ""), { apiVersion: "2025-08-27.basil" });
+const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2025-08-27.basil" }) : null;
 
 v1.post("/checkout", async (req, res) => {
+  if (!stripe) return fail(res, 500, "stripe_not_configured");
   const email = String(req.body?.email || "").trim();
   if (!email) return fail(res, 400, "email_required");
   try {
