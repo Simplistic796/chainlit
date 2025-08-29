@@ -555,16 +555,17 @@ process.on("uncaughtException", (err) => {
 app.listen(port, () => {
   logger.info(`Listening on port ${port}`);
   
+  // Temporarily disabled for debugging
   // Initialize backtest scheduler and worker
-  scheduleDaily(100).catch((err) => {
-    logger.warn({ err }, "Failed to schedule daily backtest job");
-  });
+  // scheduleDaily(100).catch((err) => {
+  //   logger.warn({ err }, "Failed to schedule daily backtest job");
+  // });
   
   // Initialize alert evaluator scheduler
-  scheduleAlertEvaluator().catch((err) => {
-    logger.warn({ err }, "Failed to schedule alert evaluator job");
-  });
+  // scheduleAlertEvaluator().catch((err) => {
+  //   logger.warn({ err }, "Failed to schedule alert evaluator job");
+  // });
   
-  logger.info("Backtest worker started and listening for jobs");
-  logger.info("Alert evaluator started and scheduled every 5 minutes");
+  // logger.info("Backtest worker started and listening for jobs");
+  // logger.info("Alert evaluator started and scheduled every 5 minutes");
 });
