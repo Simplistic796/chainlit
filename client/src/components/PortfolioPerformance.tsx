@@ -19,6 +19,10 @@ type PortfolioPnLData = {
     stdev: number;
     sharpeDaily: number;
     maxDD: number;
+    alphaBTC: number;
+    betaBTC: number;
+    alphaETH: number;
+    betaETH: number;
   };
 };
 
@@ -65,21 +69,31 @@ function Sparkline({ data, color, height = 40, width = 200 }: {
 export default function PortfolioPerformance() {
   const [data, setData] = useState<PortfolioPnLData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [selectedDays, setSelectedDays] = useState(30);
 
   async function loadPerformance(days: number) {
     try {
       setLoading(true);
+      setError(null);
       const response = await axios.get<{ ok: boolean; data: PortfolioPnLData }>(`${API_BASE}/ui/portfolio/pnl`, {
         params: { days }
       });
       setData(response.data?.data || null);
     } catch (error) {
       console.error('Failed to load portfolio performance:', error);
+      setError('Failed to load performance data');
       setData(null);
     } finally {
       setLoading(false);
     }
+  }
+
+  function downloadCSV() {
+    if (!data) return;
+    
+    const days = selectedDays;
+    window.open(`${API_BASE}/ui/portfolio/pnl.csv?days=${days}`, "_blank");
   }
 
   useEffect(() => {
@@ -93,6 +107,32 @@ export default function PortfolioPerformance() {
           <CardTitle>Portfolio Performance</CardTitle>
           <CardDescription>Loading performance data...</CardDescription>
         </CardHeader>
+        <CardContent>
+          <div className="text-xs text-muted-foreground text-center py-8">Loading performance...</div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Portfolio Performance</CardTitle>
+          <CardDescription>Error loading performance data</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="text-xs text-red-600 text-center py-8">{error}</div>
+          <div className="flex justify-center">
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={() => loadPerformance(selectedDays)}
+            >
+              Retry
+            </Button>
+          </div>
+        </CardContent>
       </Card>
     );
   }
@@ -117,6 +157,14 @@ export default function PortfolioPerformance() {
         <CardTitle className="flex items-center justify-between">
           Portfolio Performance
           <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={downloadCSV}
+              disabled={!data || loading}
+            >
+              Download CSV
+            </Button>
             <span className="text-sm text-muted-foreground">Window:</span>
             <Tabs value={selectedDays.toString()} onValueChange={(v) => setSelectedDays(Number(v))}>
               <TabsList className="grid w-full grid-cols-2">
@@ -193,6 +241,29 @@ export default function PortfolioPerformance() {
               {formatPercent(data.summary.maxDD)}
             </div>
             <div className="text-xs text-muted-foreground">Max Drawdown</div>
+          </div>
+        </div>
+
+        {/* Alpha/Beta Metrics */}
+        <div className="space-y-3">
+          <h4 className="text-sm font-medium text-muted-foreground">Risk-Adjusted Metrics vs Benchmarks</h4>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div className="rounded border p-2 text-xs">
+              <div className="text-muted-foreground">Alpha vs BTC</div>
+              <div className="font-medium">{(data.summary.alphaBTC * 100).toFixed(2)}%</div>
+            </div>
+            <div className="rounded border p-2 text-xs">
+              <div className="text-muted-foreground">Beta vs BTC</div>
+              <div className="font-medium">{data.summary.betaBTC.toFixed(2)}</div>
+            </div>
+            <div className="rounded border p-2 text-xs">
+              <div className="text-muted-foreground">Alpha vs ETH</div>
+              <div className="font-medium">{(data.summary.alphaETH * 100).toFixed(2)}%</div>
+            </div>
+            <div className="rounded border p-2 text-xs">
+              <div className="text-muted-foreground">Beta vs ETH</div>
+              <div className="font-medium">{data.summary.betaETH.toFixed(2)}</div>
+            </div>
           </div>
         </div>
 
