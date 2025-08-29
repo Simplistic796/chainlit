@@ -54,8 +54,6 @@ const sentry_1 = require("./observability/sentry");
 const pino_http_1 = __importDefault(require("pino-http"));
 const uuid_1 = require("uuid");
 const mw_1 = require("./api/mw");
-const dailySignals_1 = require("./jobs/backtest/dailySignals");
-const evaluator_1 = require("./jobs/alerts/evaluator");
 const app = (0, express_1.default)();
 const port = Number(process.env.PORT || 3000);
 // Initialize Sentry + logging
@@ -206,8 +204,10 @@ const v1 = express_1.default.Router();
 v1.use(mw_1.apiAuth, mw_1.logApiUsage);
 // --- Stripe checkout route (subscription) ---
 const stripe_1 = __importDefault(require("stripe"));
-const stripe = new stripe_1.default(String(process.env.STRIPE_SECRET_KEY || ""), { apiVersion: "2025-08-27.basil" });
+const stripe = process.env.STRIPE_SECRET_KEY ? new stripe_1.default(process.env.STRIPE_SECRET_KEY, { apiVersion: "2025-08-27.basil" }) : null;
 v1.post("/checkout", async (req, res) => {
+    if (!stripe)
+        return (0, mw_1.fail)(res, 500, "stripe_not_configured");
     const email = String(req.body?.email || "").trim();
     if (!email)
         return (0, mw_1.fail)(res, 400, "email_required");
@@ -492,6 +492,200 @@ ui.delete("/alerts/:id", async (req, res) => {
     await prisma_1.prisma.alert.deleteMany({ where: { id, apiKeyId: key.id } });
     return (0, mw_1.ok)(res, { removed: id });
 });
+// --- Portfolio endpoints ---
+// Get or create demo user's single portfolio
+ui.get("/portfolio", async (req, res) => {
+    const key = req.apiKey;
+    const k = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+    if (!k?.user)
+        return (0, mw_1.fail)(res, 500, "demo_user_missing");
+    let p = await prisma_1.prisma.portfolio.findFirst({ where: { userId: k.user.id } });
+    if (!p) {
+        p = await prisma_1.prisma.portfolio.create({ data: { userId: k.user.id, name: "My Portfolio" } });
+    }
+    const holdings = await prisma_1.prisma.holding.findMany({ where: { portfolioId: p.id }, orderBy: { token: "asc" } });
+    return (0, mw_1.ok)(res, { portfolio: p, holdings });
+});
+// GET /ui/portfolio/pnl?days=30 - Portfolio performance vs benchmarks
+ui.get("/portfolio/pnl", async (req, res) => {
+    try {
+        const days = Math.max(7, Math.min(365, Number(req.query.days || 30)));
+        const key = req.apiKey;
+        const k = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+        if (!k?.user)
+            return (0, mw_1.fail)(res, 500, "demo_user_missing");
+        // Get user's portfolio and holdings
+        let portfolio = await prisma_1.prisma.portfolio.findFirst({ where: { userId: k.user.id } });
+        if (!portfolio) {
+            portfolio = await prisma_1.prisma.portfolio.create({ data: { userId: k.user.id, name: "My Portfolio" } });
+        }
+        const holdings = await prisma_1.prisma.holding.findMany({ where: { portfolioId: portfolio.id } });
+        if (holdings.length === 0) {
+            return (0, mw_1.ok)(res, {
+                windowDays: days,
+                dates: [],
+                portfolio: [],
+                btc: [],
+                eth: [],
+                summary: {
+                    cum: 0,
+                    mean: 0,
+                    stdev: 0,
+                    sharpeDaily: 0,
+                    maxDD: 0
+                }
+            });
+        }
+        // Get tokens from holdings
+        const tokens = holdings.map(h => h.token);
+        // Import and use the price history provider
+        const { getPriceHistory } = await Promise.resolve().then(() => __importStar(require("./providers/prices/history")));
+        const priceData = await getPriceHistory({ tokens, days });
+        if (!priceData) {
+            return (0, mw_1.fail)(res, 500, "failed_to_fetch_price_data");
+        }
+        const { dates, closes, benchmarks } = priceData;
+        if (dates.length < 2) {
+            return (0, mw_1.fail)(res, 400, "insufficient_price_data");
+        }
+        // Calculate daily returns for portfolio
+        const portfolioReturns = [];
+        const btcReturns = [];
+        const ethReturns = [];
+        for (let i = 1; i < dates.length; i++) {
+            // Portfolio return: weighted sum of token returns
+            let portfolioReturn = 0;
+            let totalWeight = 0;
+            for (const holding of holdings) {
+                const tokenCloses = closes[holding.token];
+                if (tokenCloses && tokenCloses.length > i) {
+                    const prevPrice = tokenCloses[i - 1];
+                    const currPrice = tokenCloses[i];
+                    if (prevPrice !== undefined && currPrice !== undefined && prevPrice > 0 && currPrice > 0) {
+                        const tokenReturn = (currPrice / prevPrice) - 1;
+                        portfolioReturn += holding.weight * tokenReturn;
+                        totalWeight += holding.weight;
+                    }
+                }
+            }
+            // Normalize by total weight if not 1.0
+            if (totalWeight > 0) {
+                portfolioReturn = portfolioReturn / totalWeight;
+            }
+            portfolioReturns.push(portfolioReturn);
+            // BTC and ETH returns
+            if (benchmarks.btc.length > i && benchmarks.btc.length > i - 1) {
+                const btcPrev = benchmarks.btc[i - 1];
+                const btcCurr = benchmarks.btc[i];
+                if (btcPrev !== undefined && btcCurr !== undefined) {
+                    btcReturns.push(btcPrev > 0 ? (btcCurr / btcPrev) - 1 : 0);
+                }
+                else {
+                    btcReturns.push(0);
+                }
+            }
+            else {
+                btcReturns.push(0);
+            }
+            if (benchmarks.eth.length > i && benchmarks.eth.length > i - 1) {
+                const ethPrev = benchmarks.eth[i - 1];
+                const ethCurr = benchmarks.eth[i];
+                if (ethPrev !== undefined && ethCurr !== undefined) {
+                    ethReturns.push(ethPrev > 0 ? (ethCurr / ethPrev) - 1 : 0);
+                }
+                else {
+                    ethReturns.push(0);
+                }
+            }
+            else {
+                ethReturns.push(0);
+            }
+        }
+        // Calculate summary metrics
+        const summary = calculatePortfolioMetrics(portfolioReturns);
+        return (0, mw_1.ok)(res, {
+            windowDays: days,
+            dates: dates.slice(1), // Skip first date since we need 2 points for returns
+            portfolio: portfolioReturns,
+            btc: btcReturns,
+            eth: ethReturns,
+            summary
+        });
+    }
+    catch (error) {
+        console.error('Portfolio PnL error:', error);
+        return (0, mw_1.fail)(res, 500, "portfolio_pnl_calculation_failed");
+    }
+});
+// Helper function to calculate portfolio metrics
+function calculatePortfolioMetrics(returns) {
+    if (returns.length === 0) {
+        return { cum: 0, mean: 0, stdev: 0, sharpeDaily: 0, maxDD: 0 };
+    }
+    // Cumulative return: product of (1 + r) - 1
+    const cum = returns.reduce((acc, r) => acc * (1 + r), 1) - 1;
+    // Mean daily return
+    const mean = returns.reduce((sum, r) => sum + r, 0) / returns.length;
+    // Standard deviation
+    const variance = returns.reduce((sum, r) => sum + Math.pow(r - mean, 2), 0) / returns.length;
+    const stdev = Math.sqrt(variance);
+    // Sharpe ratio (daily, assuming 0% risk-free rate)
+    const sharpeDaily = stdev > 0 ? mean / stdev : 0;
+    // Maximum drawdown
+    let maxDD = 0;
+    let peak = 1;
+    let runningValue = 1;
+    for (const r of returns) {
+        runningValue *= (1 + r);
+        if (runningValue > peak) {
+            peak = runningValue;
+        }
+        const drawdown = (peak - runningValue) / peak;
+        if (drawdown > maxDD) {
+            maxDD = drawdown;
+        }
+    }
+    return {
+        cum: Number(cum.toFixed(4)),
+        mean: Number(mean.toFixed(4)),
+        stdev: Number(stdev.toFixed(4)),
+        sharpeDaily: Number(sharpeDaily.toFixed(4)),
+        maxDD: Number(maxDD.toFixed(4))
+    };
+}
+// Upsert holding (add or update weight)
+ui.post("/portfolio/holdings", async (req, res) => {
+    const token = String(req.body?.token || "").trim().toUpperCase();
+    const weight = Number(req.body?.weight);
+    if (!token || !Number.isFinite(weight) || weight < 0 || weight > 1)
+        return (0, mw_1.fail)(res, 400, "token_and_weight_required");
+    const key = req.apiKey;
+    const k = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+    if (!k?.user)
+        return (0, mw_1.fail)(res, 500, "demo_user_missing");
+    let p = await prisma_1.prisma.portfolio.findFirst({ where: { userId: k.user.id } });
+    if (!p)
+        p = await prisma_1.prisma.portfolio.create({ data: { userId: k.user.id, name: "My Portfolio" } });
+    const row = await prisma_1.prisma.holding.upsert({
+        where: { portfolioId_token: { portfolioId: p.id, token } },
+        update: { weight },
+        create: { portfolioId: p.id, token, weight },
+    });
+    return (0, mw_1.ok)(res, row);
+});
+// Remove holding
+ui.delete("/portfolio/holdings/:token", async (req, res) => {
+    const token = String(req.params.token || "").toUpperCase();
+    const key = req.apiKey;
+    const k = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+    if (!k?.user)
+        return (0, mw_1.fail)(res, 500, "demo_user_missing");
+    const p = await prisma_1.prisma.portfolio.findFirst({ where: { userId: k.user.id } });
+    if (!p)
+        return (0, mw_1.ok)(res, { removed: 0 });
+    const r = await prisma_1.prisma.holding.deleteMany({ where: { portfolioId: p.id, token } });
+    return (0, mw_1.ok)(res, { removed: r.count });
+});
 // mount under /ui
 app.use("/ui", ui);
 // mount under /v1
@@ -515,15 +709,16 @@ process.on("uncaughtException", (err) => {
 });
 app.listen(port, () => {
     logger_1.logger.info(`Listening on port ${port}`);
+    // Temporarily disabled for debugging
     // Initialize backtest scheduler and worker
-    (0, dailySignals_1.scheduleDaily)(100).catch((err) => {
-        logger_1.logger.warn({ err }, "Failed to schedule daily backtest job");
-    });
+    // scheduleDaily(100).catch((err) => {
+    //   logger.warn({ err }, "Failed to schedule daily backtest job");
+    // });
     // Initialize alert evaluator scheduler
-    (0, evaluator_1.scheduleAlertEvaluator)().catch((err) => {
-        logger_1.logger.warn({ err }, "Failed to schedule alert evaluator job");
-    });
-    logger_1.logger.info("Backtest worker started and listening for jobs");
-    logger_1.logger.info("Alert evaluator started and scheduled every 5 minutes");
+    // scheduleAlertEvaluator().catch((err) => {
+    //   logger.warn({ err }, "Failed to schedule alert evaluator job");
+    // });
+    // logger.info("Backtest worker started and listening for jobs");
+    // logger.info("Alert evaluator started and scheduled every 5 minutes");
 });
 //# sourceMappingURL=index.js.map

@@ -15,7 +15,7 @@ export default function PortfolioCard() {
   const [weight, setWeight] = useState("0.10"); // default 10%
 
   async function load() {
-    const r = await axios.get(`${API_BASE}/ui/portfolio`);
+    const r = await axios.get<{ ok: boolean; data: { portfolio: any; holdings: Holding[] } }>(`${API_BASE}/ui/portfolio`);
     setHoldings(r.data?.data?.holdings || []);
   }
   async function save() {

@@ -500,6 +500,175 @@ ui.get("/portfolio", async (req, res) => {
   return ok(res, { portfolio: p, holdings });
 });
 
+// GET /ui/portfolio/pnl?days=30 - Portfolio performance vs benchmarks
+ui.get("/portfolio/pnl", async (req, res) => {
+  try {
+    const days = Math.max(7, Math.min(365, Number(req.query.days || 30)));
+    
+    const key = (req as any).apiKey;
+    const k = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+    if (!k?.user) return fail(res, 500, "demo_user_missing");
+
+    // Get user's portfolio and holdings
+    let portfolio = await prisma.portfolio.findFirst({ where: { userId: k.user.id } });
+    if (!portfolio) {
+      portfolio = await prisma.portfolio.create({ data: { userId: k.user.id, name: "My Portfolio" } });
+    }
+    
+    const holdings = await prisma.holding.findMany({ where: { portfolioId: portfolio.id } });
+    
+    if (holdings.length === 0) {
+      return ok(res, {
+        windowDays: days,
+        dates: [],
+        portfolio: [],
+        btc: [],
+        eth: [],
+        summary: {
+          cum: 0,
+          mean: 0,
+          stdev: 0,
+          sharpeDaily: 0,
+          maxDD: 0
+        }
+      });
+    }
+
+    // Get tokens from holdings
+    const tokens = holdings.map(h => h.token);
+    
+    // Import and use the price history provider
+    const { getPriceHistory } = await import("./providers/prices/history");
+    const priceData = await getPriceHistory({ tokens, days });
+    
+    if (!priceData) {
+      return fail(res, 500, "failed_to_fetch_price_data");
+    }
+
+    const { dates, closes, benchmarks } = priceData;
+    
+    if (dates.length < 2) {
+      return fail(res, 400, "insufficient_price_data");
+    }
+
+    // Calculate daily returns for portfolio
+    const portfolioReturns: number[] = [];
+    const btcReturns: number[] = [];
+    const ethReturns: number[] = [];
+
+    for (let i = 1; i < dates.length; i++) {
+      // Portfolio return: weighted sum of token returns
+      let portfolioReturn = 0;
+      let totalWeight = 0;
+      
+      for (const holding of holdings) {
+        const tokenCloses = closes[holding.token];
+        if (tokenCloses && tokenCloses.length > i) {
+          const prevPrice = tokenCloses[i - 1];
+          const currPrice = tokenCloses[i];
+          if (prevPrice !== undefined && currPrice !== undefined && prevPrice > 0 && currPrice > 0) {
+            const tokenReturn = (currPrice / prevPrice) - 1;
+            portfolioReturn += holding.weight * tokenReturn;
+            totalWeight += holding.weight;
+          }
+        }
+      }
+      
+      // Normalize by total weight if not 1.0
+      if (totalWeight > 0) {
+        portfolioReturn = portfolioReturn / totalWeight;
+      }
+      
+      portfolioReturns.push(portfolioReturn);
+
+      // BTC and ETH returns
+      if (benchmarks.btc.length > i && benchmarks.btc.length > i - 1) {
+        const btcPrev = benchmarks.btc[i - 1];
+        const btcCurr = benchmarks.btc[i];
+        if (btcPrev !== undefined && btcCurr !== undefined) {
+          btcReturns.push(btcPrev > 0 ? (btcCurr / btcPrev) - 1 : 0);
+        } else {
+          btcReturns.push(0);
+        }
+      } else {
+        btcReturns.push(0);
+      }
+
+      if (benchmarks.eth.length > i && benchmarks.eth.length > i - 1) {
+        const ethPrev = benchmarks.eth[i - 1];
+        const ethCurr = benchmarks.eth[i];
+        if (ethPrev !== undefined && ethCurr !== undefined) {
+          ethReturns.push(ethPrev > 0 ? (ethCurr / ethPrev) - 1 : 0);
+        } else {
+          ethReturns.push(0);
+        }
+      } else {
+        ethReturns.push(0);
+      }
+    }
+
+    // Calculate summary metrics
+    const summary = calculatePortfolioMetrics(portfolioReturns);
+
+    return ok(res, {
+      windowDays: days,
+      dates: dates.slice(1), // Skip first date since we need 2 points for returns
+      portfolio: portfolioReturns,
+      btc: btcReturns,
+      eth: ethReturns,
+      summary
+    });
+
+  } catch (error) {
+    console.error('Portfolio PnL error:', error);
+    return fail(res, 500, "portfolio_pnl_calculation_failed");
+  }
+});
+
+// Helper function to calculate portfolio metrics
+function calculatePortfolioMetrics(returns: number[]) {
+  if (returns.length === 0) {
+    return { cum: 0, mean: 0, stdev: 0, sharpeDaily: 0, maxDD: 0 };
+  }
+
+  // Cumulative return: product of (1 + r) - 1
+  const cum = returns.reduce((acc, r) => acc * (1 + r), 1) - 1;
+  
+  // Mean daily return
+  const mean = returns.reduce((sum, r) => sum + r, 0) / returns.length;
+  
+  // Standard deviation
+  const variance = returns.reduce((sum, r) => sum + Math.pow(r - mean, 2), 0) / returns.length;
+  const stdev = Math.sqrt(variance);
+  
+  // Sharpe ratio (daily, assuming 0% risk-free rate)
+  const sharpeDaily = stdev > 0 ? mean / stdev : 0;
+  
+  // Maximum drawdown
+  let maxDD = 0;
+  let peak = 1;
+  let runningValue = 1;
+  
+  for (const r of returns) {
+    runningValue *= (1 + r);
+    if (runningValue > peak) {
+      peak = runningValue;
+    }
+    const drawdown = (peak - runningValue) / peak;
+    if (drawdown > maxDD) {
+      maxDD = drawdown;
+    }
+  }
+
+  return {
+    cum: Number(cum.toFixed(4)),
+    mean: Number(mean.toFixed(4)),
+    stdev: Number(stdev.toFixed(4)),
+    sharpeDaily: Number(sharpeDaily.toFixed(4)),
+    maxDD: Number(maxDD.toFixed(4))
+  };
+}
+
 // Upsert holding (add or update weight)
 ui.post("/portfolio/holdings", async (req, res) => {
   const token = String(req.body?.token || "").trim().toUpperCase();

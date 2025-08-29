@@ -12,8 +12,9 @@ import AgentChip from "@/components/AgentChip";
 import WatchlistCard from "@/components/WatchlistCard";
 import AlertsManager from "@/components/AlertsManager";
 import NavBar from "@/components/NavBar";
-import SubscribeCard from "@/components/SubscribeCard";
+
 import PortfolioCard from "@/components/PortfolioCard";
+import PortfolioPerformance from "@/components/PortfolioPerformance";
 
 
 type AnalysisResult = {
@@ -313,6 +314,9 @@ export default function App() {
 
         <div className="mt-6">
           <PortfolioCard />
+          <div className="mt-4">
+            <PortfolioPerformance />
+          </div>
         </div>
       </div>
     </div>
