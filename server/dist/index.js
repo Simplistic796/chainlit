@@ -507,248 +507,6 @@ ui.get("/portfolio", async (req, res) => {
     const holdings = await prisma_1.prisma.holding.findMany({ where: { portfolioId: p.id }, orderBy: { token: "asc" } });
     return (0, mw_1.ok)(res, { portfolio: p, holdings });
 });
-// GET /ui/portfolio/pnl?days=30 - Portfolio performance vs benchmarks
-ui.get("/portfolio/pnl", async (req, res) => {
-    try {
-        const days = Math.max(7, Math.min(365, Number(req.query.days || 30)));
-        const key = req.apiKey;
-        const k = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-        if (!k?.user)
-            return (0, mw_1.fail)(res, 500, "demo_user_missing");
-        // Check Redis cache first
-        const r = (0, redis_1.getRedis)();
-        const cacheKey = `pnl:${k.user.id}:${days}`;
-        if (r) {
-            const hit = await r.get(cacheKey);
-            if (hit) {
-                return res.json(JSON.parse(hit));
-            }
-        }
-        // Get user's portfolio and holdings
-        let portfolio = await prisma_1.prisma.portfolio.findFirst({ where: { userId: k.user.id } });
-        if (!portfolio) {
-            portfolio = await prisma_1.prisma.portfolio.create({ data: { userId: k.user.id, name: "My Portfolio" } });
-        }
-        const holdings = await prisma_1.prisma.holding.findMany({ where: { portfolioId: portfolio.id } });
-        if (holdings.length === 0) {
-            return (0, mw_1.ok)(res, {
-                windowDays: days,
-                dates: [],
-                portfolio: [],
-                btc: [],
-                eth: [],
-                summary: {
-                    cum: 0,
-                    mean: 0,
-                    stdev: 0,
-                    sharpeDaily: 0,
-                    maxDD: 0,
-                    alphaBTC: 0,
-                    betaBTC: 0,
-                    alphaETH: 0,
-                    betaETH: 0
-                }
-            });
-        }
-        // Get tokens from holdings
-        const tokens = holdings.map(h => h.token);
-        // Import and use the price history provider
-        const { getPriceHistory } = await Promise.resolve().then(() => __importStar(require("./providers/prices/history")));
-        const priceData = await getPriceHistory({ tokens, days });
-        if (!priceData) {
-            return (0, mw_1.fail)(res, 500, "failed_to_fetch_price_data");
-        }
-        const { dates, closes, benchmarks } = priceData;
-        if (dates.length < 2) {
-            return (0, mw_1.fail)(res, 400, "insufficient_price_data");
-        }
-        // Calculate daily returns for portfolio
-        const portfolioReturns = [];
-        const btcReturns = [];
-        const ethReturns = [];
-        for (let i = 1; i < dates.length; i++) {
-            // Portfolio return: weighted sum of token returns
-            let portfolioReturn = 0;
-            let totalWeight = 0;
-            for (const holding of holdings) {
-                const tokenCloses = closes[holding.token];
-                if (tokenCloses && tokenCloses.length > i) {
-                    const prevPrice = tokenCloses[i - 1];
-                    const currPrice = tokenCloses[i];
-                    if (prevPrice !== undefined && currPrice !== undefined && prevPrice > 0 && currPrice > 0) {
-                        const tokenReturn = (currPrice / prevPrice) - 1;
-                        portfolioReturn += holding.weight * tokenReturn;
-                        totalWeight += holding.weight;
-                    }
-                }
-            }
-            // Normalize by total weight if not 1.0
-            if (totalWeight > 0) {
-                portfolioReturn = portfolioReturn / totalWeight;
-            }
-            portfolioReturns.push(portfolioReturn);
-            // BTC and ETH returns
-            if (benchmarks.btc.length > i && benchmarks.btc.length > i - 1) {
-                const btcPrev = benchmarks.btc[i - 1];
-                const btcCurr = benchmarks.btc[i];
-                if (btcPrev !== undefined && btcCurr !== undefined) {
-                    btcReturns.push(btcPrev > 0 ? (btcCurr / btcPrev) - 1 : 0);
-                }
-                else {
-                    btcReturns.push(0);
-                }
-            }
-            else {
-                btcReturns.push(0);
-            }
-            if (benchmarks.eth.length > i && benchmarks.eth.length > i - 1) {
-                const ethPrev = benchmarks.eth[i - 1];
-                const ethCurr = benchmarks.eth[i];
-                if (ethPrev !== undefined && ethCurr !== undefined) {
-                    ethReturns.push(ethPrev > 0 ? (ethCurr / ethPrev) - 1 : 0);
-                }
-                else {
-                    ethReturns.push(0);
-                }
-            }
-            else {
-                ethReturns.push(0);
-            }
-        }
-        // Calculate summary metrics
-        const summary = calculatePortfolioMetrics(portfolioReturns);
-        // Calculate alpha/beta vs benchmarks
-        const { alpha: alphaBTC, beta: betaBTC } = (0, regression_1.ols)(btcReturns, portfolioReturns);
-        const { alpha: alphaETH, beta: betaETH } = (0, regression_1.ols)(ethReturns, portfolioReturns);
-        // Add alpha/beta to summary
-        const summaryWithAlphaBeta = {
-            ...summary,
-            alphaBTC: Number(alphaBTC.toFixed(6)),
-            betaBTC: Number(betaBTC.toFixed(4)),
-            alphaETH: Number(alphaETH.toFixed(6)),
-            betaETH: Number(betaETH.toFixed(4))
-        };
-        const result = {
-            windowDays: days,
-            dates: dates.slice(1), // Skip first date since we need 2 points for returns
-            portfolio: portfolioReturns,
-            btc: btcReturns,
-            eth: ethReturns,
-            summary: summaryWithAlphaBeta
-        };
-        // Cache the result for 10 minutes
-        if (r) {
-            await r.setex(cacheKey, 600, JSON.stringify(result));
-        }
-        return (0, mw_1.ok)(res, result);
-    }
-    catch (error) {
-        console.error('Portfolio PnL error:', error);
-        return (0, mw_1.fail)(res, 500, "portfolio_pnl_calculation_failed");
-    }
-});
-// GET /ui/portfolio/pnl.csv?days=30 - CSV export of portfolio performance
-ui.get("/portfolio/pnl.csv", async (req, res) => {
-    try {
-        const days = Math.max(7, Math.min(365, Number(req.query.days || 30)));
-        const key = req.apiKey;
-        const k = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-        if (!k?.user)
-            return (0, mw_1.fail)(res, 500, "demo_user_missing");
-        // Get user's portfolio and holdings
-        let portfolio = await prisma_1.prisma.portfolio.findFirst({ where: { userId: k.user.id } });
-        if (!portfolio) {
-            portfolio = await prisma_1.prisma.portfolio.create({ data: { userId: k.user.id, name: "My Portfolio" } });
-        }
-        const holdings = await prisma_1.prisma.holding.findMany({ where: { portfolioId: portfolio.id } });
-        if (holdings.length === 0) {
-            res.setHeader("Content-Type", "text/csv; charset=utf-8");
-            res.setHeader("Content-Disposition", `attachment; filename="chainlit-portfolio-${days}d.csv"`);
-            return res.send("date,portfolio,btc,eth\n");
-        }
-        // Get tokens from holdings
-        const tokens = holdings.map(h => h.token);
-        // Import and use the price history provider
-        const { getPriceHistory } = await Promise.resolve().then(() => __importStar(require("./providers/prices/history")));
-        const priceData = await getPriceHistory({ tokens, days });
-        if (!priceData) {
-            return (0, mw_1.fail)(res, 500, "failed_to_fetch_price_data");
-        }
-        const { dates, closes, benchmarks } = priceData;
-        if (dates.length < 2) {
-            return (0, mw_1.fail)(res, 400, "insufficient_price_data");
-        }
-        // Calculate daily returns for portfolio
-        const portfolioReturns = [];
-        const btcReturns = [];
-        const ethReturns = [];
-        for (let i = 1; i < dates.length; i++) {
-            // Portfolio return: weighted sum of token returns
-            let portfolioReturn = 0;
-            let totalWeight = 0;
-            for (const holding of holdings) {
-                const tokenCloses = closes[holding.token];
-                if (tokenCloses && tokenCloses.length > i) {
-                    const prevPrice = tokenCloses[i - 1];
-                    const currPrice = tokenCloses[i];
-                    if (prevPrice !== undefined && currPrice !== undefined && prevPrice > 0 && currPrice > 0) {
-                        const tokenReturn = (currPrice / prevPrice) - 1;
-                        portfolioReturn += holding.weight * tokenReturn;
-                        totalWeight += holding.weight;
-                    }
-                }
-            }
-            // Normalize by total weight if not 1.0
-            if (totalWeight > 0) {
-                portfolioReturn = portfolioReturn / totalWeight;
-            }
-            portfolioReturns.push(portfolioReturn);
-            // BTC and ETH returns
-            if (benchmarks.btc.length > i && benchmarks.btc.length > i - 1) {
-                const btcPrev = benchmarks.btc[i - 1];
-                const btcCurr = benchmarks.btc[i];
-                if (btcPrev !== undefined && btcCurr !== undefined) {
-                    btcReturns.push(btcPrev > 0 ? (btcCurr / btcPrev) - 1 : 0);
-                }
-                else {
-                    btcReturns.push(0);
-                }
-            }
-            else {
-                btcReturns.push(0);
-            }
-            if (benchmarks.eth.length > i && benchmarks.eth.length > i - 1) {
-                const ethPrev = benchmarks.eth[i - 1];
-                const ethCurr = benchmarks.eth[i];
-                if (ethPrev !== undefined && ethCurr !== undefined) {
-                    ethReturns.push(ethPrev > 0 ? (ethCurr / ethPrev) - 1 : 0);
-                }
-                else {
-                    ethReturns.push(0);
-                }
-            }
-            else {
-                ethReturns.push(0);
-            }
-        }
-        // Generate CSV
-        let csv = "date,portfolio,btc,eth\n";
-        for (let i = 0; i < dates.slice(1).length; i++) {
-            const date = dates.slice(1)[i];
-            const portfolioReturn = portfolioReturns[i] ?? "";
-            const btcReturn = btcReturns[i] ?? "";
-            const ethReturn = ethReturns[i] ?? "";
-            csv += `${date},${portfolioReturn},${btcReturn},${ethReturn}\n`;
-        }
-        res.setHeader("Content-Type", "text/csv; charset=utf-8");
-        res.setHeader("Content-Disposition", `attachment; filename="chainlit-portfolio-${days}d.csv"`);
-        res.send(csv);
-    }
-    catch (error) {
-        console.error('Portfolio CSV export error:', error);
-        return (0, mw_1.fail)(res, 500, "csv_export_failed");
-    }
-});
 // Helper function to calculate portfolio metrics
 function calculatePortfolioMetrics(returns) {
     if (returns.length === 0) {
@@ -785,6 +543,182 @@ function calculatePortfolioMetrics(returns) {
         maxDD: Number(maxDD.toFixed(4))
     };
 }
+// Shared function to calculate portfolio PnL data
+async function getPortfolioPnlData(userId, days) {
+    // Get user's portfolio and holdings
+    let portfolio = await prisma_1.prisma.portfolio.findFirst({ where: { userId } });
+    if (!portfolio) {
+        portfolio = await prisma_1.prisma.portfolio.create({ data: { userId, name: "My Portfolio" } });
+    }
+    const holdings = await prisma_1.prisma.holding.findMany({ where: { portfolioId: portfolio.id } });
+    if (holdings.length === 0) {
+        return {
+            windowDays: days,
+            dates: [],
+            portfolio: [],
+            btc: [],
+            eth: [],
+            summary: {
+                cum: 0,
+                mean: 0,
+                stdev: 0,
+                sharpeDaily: 0,
+                maxDD: 0,
+                alphaBTC: 0,
+                betaBTC: 0,
+                alphaETH: 0,
+                betaETH: 0
+            }
+        };
+    }
+    // Get tokens from holdings
+    const tokens = holdings.map(h => h.token);
+    // Import and use the price history provider
+    const { getPriceHistory } = await Promise.resolve().then(() => __importStar(require("./providers/prices/history")));
+    const priceData = await getPriceHistory({ tokens, days });
+    if (!priceData) {
+        throw new Error("failed_to_fetch_price_data");
+    }
+    const { dates, closes, benchmarks } = priceData;
+    if (dates.length < 2) {
+        throw new Error("insufficient_price_data");
+    }
+    // Calculate daily returns for portfolio
+    const portfolioReturns = [];
+    const btcReturns = [];
+    const ethReturns = [];
+    for (let i = 1; i < dates.length; i++) {
+        // Portfolio return: weighted sum of token returns
+        let portfolioReturn = 0;
+        let totalWeight = 0;
+        for (const holding of holdings) {
+            const tokenCloses = closes[holding.token];
+            if (tokenCloses && tokenCloses.length > i) {
+                const prevPrice = tokenCloses[i - 1];
+                const currPrice = tokenCloses[i];
+                if (prevPrice !== undefined && currPrice !== undefined && prevPrice > 0 && currPrice > 0) {
+                    const tokenReturn = (currPrice / prevPrice) - 1;
+                    portfolioReturn += holding.weight * tokenReturn;
+                    totalWeight += holding.weight;
+                }
+            }
+        }
+        // Normalize by total weight if not 1.0
+        if (totalWeight > 0) {
+            portfolioReturn = portfolioReturn / totalWeight;
+        }
+        portfolioReturns.push(portfolioReturn);
+        // BTC and ETH returns
+        if (benchmarks.btc.length > i && benchmarks.btc.length > i - 1) {
+            const btcPrev = benchmarks.btc[i - 1];
+            const btcCurr = benchmarks.btc[i];
+            if (btcPrev !== undefined && btcCurr !== undefined) {
+                btcReturns.push(btcPrev > 0 ? (btcCurr / btcPrev) - 1 : 0);
+            }
+            else {
+                btcReturns.push(0);
+            }
+        }
+        else {
+            btcReturns.push(0);
+        }
+        if (benchmarks.eth.length > i && benchmarks.eth.length > i - 1) {
+            const ethPrev = benchmarks.eth[i - 1];
+            const ethCurr = benchmarks.eth[i];
+            if (ethPrev !== undefined && ethCurr !== undefined) {
+                ethReturns.push(ethPrev > 0 ? (ethCurr / ethPrev) - 1 : 0);
+            }
+            else {
+                ethReturns.push(0);
+            }
+        }
+        else {
+            ethReturns.push(0);
+        }
+    }
+    // Calculate summary metrics
+    const summary = calculatePortfolioMetrics(portfolioReturns);
+    // Calculate alpha/beta vs benchmarks
+    const { alpha: alphaBTC, beta: betaBTC } = (0, regression_1.ols)(btcReturns, portfolioReturns);
+    const { alpha: alphaETH, beta: betaETH } = (0, regression_1.ols)(ethReturns, portfolioReturns);
+    // Add alpha/beta to summary
+    const summaryWithAlphaBeta = {
+        ...summary,
+        alphaBTC: Number(alphaBTC.toFixed(6)),
+        betaBTC: Number(betaBTC.toFixed(4)),
+        alphaETH: Number(alphaETH.toFixed(6)),
+        betaETH: Number(betaETH.toFixed(4))
+    };
+    return {
+        windowDays: days,
+        dates: dates.slice(1), // Skip first date since we need 2 points for returns
+        portfolio: portfolioReturns,
+        btc: btcReturns,
+        eth: ethReturns,
+        summary: summaryWithAlphaBeta
+    };
+}
+// GET /ui/portfolio/pnl?days=30 - Portfolio performance vs benchmarks
+ui.get("/portfolio/pnl", async (req, res) => {
+    try {
+        const days = Math.max(7, Math.min(365, Number(req.query.days || 30)));
+        const key = req.apiKey;
+        const k = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+        if (!k?.user)
+            return (0, mw_1.fail)(res, 500, "demo_user_missing");
+        // Check Redis cache first
+        const r = (0, redis_1.getRedis)();
+        const cacheKey = `pnl:${k.user.id}:${days}`;
+        if (r) {
+            const hit = await r.get(cacheKey);
+            if (hit) {
+                return res.json(JSON.parse(hit));
+            }
+        }
+        const result = await getPortfolioPnlData(k.user.id, days);
+        // Cache the result for 10 minutes
+        if (r) {
+            await r.setex(cacheKey, 600, JSON.stringify(result));
+        }
+        return (0, mw_1.ok)(res, result);
+    }
+    catch (error) {
+        console.error('Portfolio PnL error:', error);
+        return (0, mw_1.fail)(res, 500, "portfolio_pnl_calculation_failed");
+    }
+});
+// GET /ui/portfolio/pnl.csv?days=30 - CSV export of portfolio performance
+ui.get("/portfolio/pnl.csv", async (req, res) => {
+    try {
+        const days = Math.max(7, Math.min(365, Number(req.query.days || 30)));
+        const key = req.apiKey;
+        const k = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+        if (!k?.user)
+            return (0, mw_1.fail)(res, 500, "demo_user_missing");
+        const data = await getPortfolioPnlData(k.user.id, days);
+        if (data.dates.length === 0) {
+            res.setHeader("Content-Type", "text/csv; charset=utf-8");
+            res.setHeader("Content-Disposition", `attachment; filename="chainlit-portfolio-${days}d.csv"`);
+            return res.send("date,portfolio,btc,eth\n");
+        }
+        // Generate CSV
+        let csv = "date,portfolio,btc,eth\n";
+        for (let i = 0; i < data.dates.length; i++) {
+            const date = data.dates[i];
+            const portfolioReturn = data.portfolio[i] ?? "";
+            const btcReturn = data.btc[i] ?? "";
+            const ethReturn = data.eth[i] ?? "";
+            csv += `${date},${portfolioReturn},${btcReturn},${ethReturn}\n`;
+        }
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename="chainlit-portfolio-${days}d.csv"`);
+        res.send(csv);
+    }
+    catch (error) {
+        console.error('Portfolio CSV export error:', error);
+        return (0, mw_1.fail)(res, 500, "csv_export_failed");
+    }
+});
 // Upsert holding (add or update weight)
 ui.post("/portfolio/holdings", async (req, res) => {
     const token = String(req.body?.token || "").trim().toUpperCase();
