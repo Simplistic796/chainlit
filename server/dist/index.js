@@ -352,6 +352,37 @@ v1.get("/backtest/summary", async (req, res) => {
     const data = await backtestSummary(Math.max(7, Math.min(120, days)));
     return (0, mw_1.ok)(res, data);
 });
+// GET /v1/analytics/usage?from=YYYY-MM-DD&to=YYYY-MM-DD
+v1.get("/analytics/usage", async (req, res) => {
+    const fromStr = String(req.query.from || "").trim();
+    const toStr = String(req.query.to || "").trim();
+    if (!fromStr || !toStr) {
+        return (0, mw_1.fail)(res, 400, "from_and_to_dates_required");
+    }
+    try {
+        const fromDate = new Date(`${fromStr}T00:00:00.000Z`);
+        const toDate = new Date(`${toStr}T23:59:59.999Z`);
+        if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+            return (0, mw_1.fail)(res, 400, "invalid_date_format");
+        }
+        const key = req.apiKey;
+        const rows = await prisma_1.prisma.apiUsageDaily.findMany({
+            where: {
+                apiKeyId: key.id,
+                date: {
+                    gte: fromDate,
+                    lte: toDate
+                }
+            },
+            orderBy: { date: "asc" }
+        });
+        return (0, mw_1.ok)(res, rows);
+    }
+    catch (error) {
+        logger_1.logger.error({ error }, "Analytics usage query failed");
+        return (0, mw_1.fail)(res, 500, "analytics_query_failed");
+    }
+});
 // WATCHLIST CRUD (per API key)
 v1.get("/watchlist", async (req, res) => {
     const key = req.apiKey;
@@ -424,6 +455,9 @@ v1.get("/docs", (req, res) => {
             { method: "POST", path: "/v1/debate", body: { token: "ETH", rounds: 3 } },
             { method: "GET", path: "/v1/consensus/:token" },
             { method: "GET", path: "/v1/consensus/:token/opinions?limit=12" },
+            { method: "GET", path: "/v1/backtest/signals?date=YYYY-MM-DD&limit=100" },
+            { method: "GET", path: "/v1/backtest/summary?days=30" },
+            { method: "GET", path: "/v1/analytics/usage?from=YYYY-MM-DD&to=YYYY-MM-DD" },
             { method: "GET", path: "/v1/watchlist" },
             { method: "POST", path: "/v1/watchlist", body: { token: "ETH" } },
             { method: "DELETE", path: "/v1/watchlist/:token" },
@@ -752,6 +786,31 @@ ui.delete("/portfolio/holdings/:token", async (req, res) => {
     const r = await prisma_1.prisma.holding.deleteMany({ where: { portfolioId: p.id, token } });
     return (0, mw_1.ok)(res, { removed: r.count });
 });
+// GET /ui/analytics/usage?days=30
+ui.get("/analytics/usage", async (req, res) => {
+    try {
+        const days = Math.max(7, Math.min(365, Number(req.query.days || 30)));
+        const key = req.apiKey;
+        // Calculate date range
+        const toDate = new Date();
+        const fromDate = new Date(toDate.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+        const rows = await prisma_1.prisma.apiUsageDaily.findMany({
+            where: {
+                apiKeyId: key.id,
+                date: {
+                    gte: fromDate,
+                    lte: toDate
+                }
+            },
+            orderBy: { date: "asc" }
+        });
+        return (0, mw_1.ok)(res, rows);
+    }
+    catch (error) {
+        logger_1.logger.error({ error }, "UI analytics usage query failed");
+        return (0, mw_1.fail)(res, 500, "analytics_query_failed");
+    }
+});
 // mount under /ui
 app.use("/ui", ui);
 // mount under /v1
@@ -784,6 +843,14 @@ app.listen(port, () => {
     // scheduleAlertEvaluator().catch((err) => {
     //   logger.warn({ err }, "Failed to schedule alert evaluator job");
     // });
+    // Initialize analytics rollup scheduler
+    Promise.resolve().then(() => __importStar(require("./jobs/analytics/rollup"))).then(({ scheduleDailyRollup }) => {
+        scheduleDailyRollup().catch((err) => {
+            logger_1.logger.warn({ err }, "Failed to schedule analytics rollup job");
+        });
+    }).catch((err) => {
+        logger_1.logger.warn({ err }, "Failed to import analytics rollup module");
+    });
     // logger.info("Backtest worker started and listening for jobs");
     // logger.info("Alert evaluator started and scheduled every 5 minutes");
 });

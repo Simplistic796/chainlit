@@ -83,6 +83,7 @@ model ApiKey {
   alertEvents    AlertEvent[]
   user           User?        @relation(fields: [userId], references: [id])
   usages         ApiUsage[]
+  usagesDaily    ApiUsageDaily[]
   watchItems     WatchItem[]
 }
 
@@ -95,6 +96,25 @@ model ApiUsage {
   apiKey    ApiKey   @relation(fields: [apiKeyId], references: [id])
 
   @@index([apiKeyId, createdAt])
+}
+
+model ApiUsageDaily {
+  id           Int      @id @default(autoincrement())
+  apiKeyId     Int
+  date         DateTime @db.Date
+  requests     Int      @default(0)
+  ok2xx        Int      @default(0)
+  client4xx    Int      @default(0)
+  server5xx    Int      @default(0)
+  avgLatencyMs Float?
+  topEndpoint  Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  apiKey       ApiKey   @relation(fields: [apiKeyId], references: [id])
+
+  @@unique([apiKeyId, date])
+  @@index([apiKeyId, date])
+  @@index([date])
 }
 
 model SignalDaily {

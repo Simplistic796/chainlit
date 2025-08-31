@@ -15,6 +15,7 @@ import NavBar from "@/components/NavBar";
 
 import PortfolioCard from "@/components/PortfolioCard";
 import PortfolioPerformance from "@/components/PortfolioPerformance";
+import UsageCard from "@/components/UsageCard";
 
 
 type AnalysisResult = {
@@ -316,6 +317,9 @@ export default function App() {
           <PortfolioCard />
           <div className="mt-4">
             <PortfolioPerformance />
+          </div>
+          <div className="mt-6">
+            <UsageCard />
           </div>
         </div>
       </div>
