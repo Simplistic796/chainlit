@@ -54,8 +54,9 @@ async function logApiUsage(req, res, next) {
             const key = req.apiKey;
             if (!key)
                 return;
+            const latencyMs = req._latencyMs ?? null;
             await prisma_1.prisma.apiUsage.create({
-                data: { apiKeyId: key.id, endpoint: req.path, status: res.statusCode },
+                data: { apiKeyId: key.id, endpoint: req.path, status: res.statusCode, latencyMs },
             });
         }
         catch { /* ignore logging failures */ }

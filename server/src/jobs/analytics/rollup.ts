@@ -4,6 +4,14 @@ import { prisma } from "../../db/prisma";
 import { getRedisForBullMQ } from "../../cache/redis";
 import { logger } from "../../observability/logger";
 
+// Helper function to calculate p95 percentile
+function p95(xs: number[]): number | null {
+  if (!xs.length) return null;
+  const arr = [...xs].sort((a, b) => a - b);
+  const idx = Math.floor(0.95 * (arr.length - 1));
+  return arr[idx] ?? null;
+}
+
 const connection = getRedisForBullMQ();
 
 export type AnalyticsRollupJobData = { 
@@ -61,6 +69,22 @@ async function processApiKeyRollup(apiKeyId: number, targetDate: Date, dateStr: 
   const startOfDay = targetDate;
   const endOfDay = new Date(targetDate.getTime() + 24 * 60 * 60 * 1000);
   
+  // Get raw usage data for latency calculations
+  const rawUsageData = await prisma.apiUsage.findMany({
+    where: {
+      apiKeyId,
+      createdAt: {
+        gte: startOfDay,
+        lt: endOfDay
+      }
+    },
+    select: {
+      status: true,
+      endpoint: true,
+      latencyMs: true
+    }
+  });
+  
   // Aggregate usage data for this API key and date
   const usageData = await prisma.apiUsage.groupBy({
     by: ['status', 'endpoint'],
@@ -100,14 +124,27 @@ async function processApiKeyRollup(apiKeyId: number, targetDate: Date, dateStr: 
     endpointCounts[item.endpoint] = (endpointCounts[item.endpoint] || 0) + count;
   }
   
-  // Find top endpoint
-  const topEndpoint = Object.entries(endpointCounts)
+  // Find top endpoints
+  const topEndpoints = Object.entries(endpointCounts)
     .sort(([,a], [,b]) => b - a)
-    .slice(0, 1)
-    .map(([endpoint, count]) => ({ endpoint, count }))[0];
+    .slice(0, 5)
+    .map(([endpoint, count]) => ({ endpoint, count }));
+  
+  // Calculate latency metrics
+  const latencies = rawUsageData
+    .filter(r => r.latencyMs != null)
+    .map(r => r.latencyMs!);
+  
+  const avgLatencyMs = latencies.length > 0 
+    ? latencies.reduce((a, b) => a + b, 0) / latencies.length 
+    : null;
+  
+  const p95LatencyMs: number | null = latencies.length > 0 
+    ? p95(latencies) 
+    : null;
   
   // Upsert the daily rollup
-  await (prisma as any).apiUsageDaily.upsert({
+  await prisma.apiUsageDaily.upsert({
     where: {
       apiKeyId_date: {
         apiKeyId,
@@ -119,7 +156,9 @@ async function processApiKeyRollup(apiKeyId: number, targetDate: Date, dateStr: 
       ok2xx,
       client4xx,
       server5xx,
-      topEndpoint: topEndpoint || null,
+      topEndpoints,
+      avgLatencyMs,
+      p95LatencyMs,
       updatedAt: new Date()
     },
     create: {
@@ -129,7 +168,9 @@ async function processApiKeyRollup(apiKeyId: number, targetDate: Date, dateStr: 
       ok2xx,
       client4xx,
       server5xx,
-      topEndpoint: topEndpoint || null
+      topEndpoints,
+      avgLatencyMs,
+      p95LatencyMs
     }
   });
   

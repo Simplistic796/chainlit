@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
 import axios from "axios";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:3000";
@@ -13,7 +14,9 @@ type UsageData = {
   ok2xx: number;
   client4xx: number;
   server5xx: number;
-  topEndpoint: { endpoint: string; count: number } | null;
+  topEndpoints: { endpoint: string; count: number }[];
+  avgLatencyMs: number | null;
+  p95LatencyMs: number | null;
 };
 
 export default function UsageCard() {
@@ -59,8 +62,10 @@ export default function UsageCard() {
   // Get top endpoints across all days
   const endpointCounts: Record<string, number> = {};
   usageData.forEach(day => {
-    if (day.topEndpoint) {
-      endpointCounts[day.topEndpoint.endpoint] = (endpointCounts[day.topEndpoint.endpoint] || 0) + day.topEndpoint.count;
+    if (day.topEndpoints && day.topEndpoints.length > 0) {
+      day.topEndpoints.forEach(ep => {
+        endpointCounts[ep.endpoint] = (endpointCounts[ep.endpoint] || 0) + ep.count;
+      });
     }
   });
 
@@ -116,6 +121,25 @@ export default function UsageCard() {
                 <div className="text-2xl font-bold text-red-600">{server5xxRate}%</div>
                 <div className="text-sm text-muted-foreground">5xx Rate</div>
               </div>
+            </div>
+
+            {/* SLO Tiles and CSV Download */}
+            <div className="flex items-center justify-between">
+              <div className="flex flex-wrap gap-2 text-xs">
+                <Badge variant="secondary">Total: {totalRequests}</Badge>
+                <Badge variant="secondary">2xx: {(totalOk2xx / totalRequests * 100).toFixed(1)}%</Badge>
+                <Badge variant="secondary">
+                  p95: {usageData.length > 0 && usageData[usageData.length - 1]?.p95LatencyMs != null
+                    ? `${usageData[usageData.length - 1].p95LatencyMs!.toFixed(0)} ms` 
+                    : "—"}
+                </Badge>
+              </div>
+              <Button
+                variant="secondary"
+                onClick={() => window.open(`${API_BASE}/ui/analytics/usage.csv?days=${days}`, "_blank")}
+              >
+                Download CSV
+              </Button>
             </div>
 
             {/* Status Rate Chips */}

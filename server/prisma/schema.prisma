@@ -88,29 +88,31 @@ model ApiKey {
 }
 
 model ApiUsage {
-  id        Int      @id @default(autoincrement())
-  apiKeyId  Int
-  endpoint  String
-  status    Int
-  createdAt DateTime @default(now())
-  apiKey    ApiKey   @relation(fields: [apiKeyId], references: [id])
+  id         Int      @id @default(autoincrement())
+  apiKeyId   Int
+  endpoint   String
+  status     Int
+  latencyMs  Float?
+  createdAt  DateTime @default(now())
+  apiKey     ApiKey   @relation(fields: [apiKeyId], references: [id])
 
   @@index([apiKeyId, createdAt])
 }
 
 model ApiUsageDaily {
-  id           Int      @id @default(autoincrement())
-  apiKeyId     Int
-  date         DateTime @db.Date
-  requests     Int      @default(0)
-  ok2xx        Int      @default(0)
-  client4xx    Int      @default(0)
-  server5xx    Int      @default(0)
-  avgLatencyMs Float?
-  topEndpoint  Json?
-  createdAt    DateTime @default(now())
+  id            Int      @id @default(autoincrement())
+  apiKeyId      Int
+  date          DateTime @db.Date
+  requests      Int      @default(0)
+  ok2xx         Int      @default(0)
+  client4xx     Int      @default(0)
+  server5xx     Int      @default(0)
+  topEndpoints  Json     @default("[]")
+  avgLatencyMs  Float?
+  p95LatencyMs  Float?
+  createdAt     DateTime @default(now())
   updatedAt    DateTime @updatedAt
-  apiKey       ApiKey   @relation(fields: [apiKeyId], references: [id])
+  apiKey        ApiKey   @relation(fields: [apiKeyId], references: [id])
 
   @@unique([apiKeyId, date])
   @@index([apiKeyId, date])

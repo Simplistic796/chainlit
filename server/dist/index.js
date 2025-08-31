@@ -75,6 +75,16 @@ app.use((req, _res, next) => {
     req.id = req.headers["x-request-id"] ?? (0, uuid_1.v4)();
     next();
 });
+// Response time middleware for latency capture
+app.use((req, res, next) => {
+    const start = process.hrtime.bigint();
+    res.on("finish", () => {
+        const end = process.hrtime.bigint();
+        const ms = Number(end - start) / 1e6;
+        req._latencyMs = ms;
+    });
+    next();
+});
 app.use((0, pino_http_1.default)({
     logger: logger_1.logger,
     customProps: (req) => ({ reqId: req.id }),
@@ -809,6 +819,37 @@ ui.get("/analytics/usage", async (req, res) => {
     catch (error) {
         logger_1.logger.error({ error }, "UI analytics usage query failed");
         return (0, mw_1.fail)(res, 500, "analytics_query_failed");
+    }
+});
+// GET /ui/analytics/usage.csv?days=30
+ui.get("/analytics/usage.csv", async (req, res) => {
+    try {
+        const days = Math.max(7, Math.min(365, Number(req.query.days || 30)));
+        const key = req.apiKey;
+        // Calculate date range
+        const toDate = new Date();
+        const fromDate = new Date(toDate.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+        const rows = await prisma_1.prisma.apiUsageDaily.findMany({
+            where: {
+                apiKeyId: key.id,
+                date: {
+                    gte: fromDate,
+                    lte: toDate
+                }
+            },
+            orderBy: { date: "asc" }
+        });
+        let csv = "date,requests,ok2xx,client4xx,server5xx,avgLatencyMs,p95LatencyMs\n";
+        for (const r of rows) {
+            csv += `${r.date.toISOString().slice(0, 10)},${r.requests},${r.ok2xx},${r.client4xx},${r.server5xx},${r.avgLatencyMs ?? ""},${r.p95LatencyMs ?? ""}\n`;
+        }
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename="chainlit-usage-${days}d.csv"`);
+        res.send(csv);
+    }
+    catch (error) {
+        logger_1.logger.error({ error }, "UI analytics CSV export failed");
+        return (0, mw_1.fail)(res, 500, "csv_export_failed");
     }
 });
 // mount under /ui

@@ -46,6 +46,17 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   (req as any).id = (req.headers["x-request-id"] as string) ?? uuidv4();
   next();
 });
+
+// Response time middleware for latency capture
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const start = process.hrtime.bigint();
+  res.on("finish", () => {
+    const end = process.hrtime.bigint();
+    const ms = Number(end - start) / 1e6;
+    (req as any)._latencyMs = ms;
+  });
+  next();
+});
 app.use(
   pinoHttp({
     logger,
@@ -829,7 +840,7 @@ ui.get("/analytics/usage", async (req, res) => {
     const toDate = new Date();
     const fromDate = new Date(toDate.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
     
-    const rows = await (prisma as any).apiUsageDaily.findMany({
+    const rows = await prisma.apiUsageDaily.findMany({
       where: {
         apiKeyId: key.id,
         date: {
@@ -844,6 +855,41 @@ ui.get("/analytics/usage", async (req, res) => {
   } catch (error) {
     logger.error({ error }, "UI analytics usage query failed");
     return fail(res, 500, "analytics_query_failed");
+  }
+});
+
+// GET /ui/analytics/usage.csv?days=30
+ui.get("/analytics/usage.csv", async (req, res) => {
+  try {
+    const days = Math.max(7, Math.min(365, Number(req.query.days || 30)));
+    const key = (req as any).apiKey;
+    
+    // Calculate date range
+    const toDate = new Date();
+    const fromDate = new Date(toDate.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+    
+    const rows = await prisma.apiUsageDaily.findMany({
+      where: {
+        apiKeyId: key.id,
+        date: {
+          gte: fromDate,
+          lte: toDate
+        }
+      },
+      orderBy: { date: "asc" }
+    });
+
+    let csv = "date,requests,ok2xx,client4xx,server5xx,avgLatencyMs,p95LatencyMs\n";
+    for (const r of rows) {
+      csv += `${r.date.toISOString().slice(0,10)},${r.requests},${r.ok2xx},${r.client4xx},${r.server5xx},${r.avgLatencyMs ?? ""},${r.p95LatencyMs ?? ""}\n`;
+    }
+    
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="chainlit-usage-${days}d.csv"`);
+    res.send(csv);
+  } catch (error) {
+    logger.error({ error }, "UI analytics CSV export failed");
+    return fail(res, 500, "csv_export_failed");
   }
 });
 
