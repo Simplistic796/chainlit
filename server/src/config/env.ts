@@ -5,7 +5,9 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().default(3000),
 
   DATABASE_URL: z.string().min(1),
-  DEMO_API_KEY: z.string().min(1),
+  DEMO_API_KEY: process.env.NODE_ENV === "production"
+    ? z.string().min(1)            // required in prod
+    : z.string().min(1).optional(),// optional outside prod
 
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_PRICE_ID: z.string().optional(),
