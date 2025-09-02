@@ -91,7 +91,11 @@ app.get("/health", (req: Request, res: Response) => {
 
 // OpenAPI JSON (v1)
 app.get("/v1/openapi.json", (_req: Request, res: Response) => {
-  res.json(loadOpenApiV1());
+  try {
+    res.json(loadOpenApiV1());
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: "openapi_load_failed", details: e?.message ?? String(e) });
+  }
 });
 
 // Swagger UI at /docs
