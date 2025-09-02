@@ -46,6 +46,7 @@
     "@types/node": "^20.5.9",
     "@types/pino-http": "^5.8.4",
     "@types/stripe": "^8.0.416",
+    "@types/swagger-ui-express": "^4.1.8",
     "@types/uuid": "^10.0.0",
     "prisma": "^5.22.0",
     "ts-node-dev": "^2.0.0",
