@@ -1,7 +1,8 @@
 import type { Request, Response } from "express";
 import Stripe from "stripe";
+import { env } from "../config/env";
 
-const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY, {
+const stripe = env.STRIPE_SECRET_KEY ? new Stripe(env.STRIPE_SECRET_KEY, {
 	apiVersion: "2025-08-27.basil",
 }) : null;
 
@@ -17,7 +18,7 @@ export async function stripeWebhook(req: Request, res: Response) {
 		event = stripe.webhooks.constructEvent(
 			req.body as any,
 			signature,
-			process.env.STRIPE_WEBHOOK_SECRET as string
+			env.STRIPE_WEBHOOK_SECRET as string
 		);
 	} catch (err: any) {
 		return res.status(400).send(`Webhook Error: ${err.message}`);

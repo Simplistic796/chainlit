@@ -1,9 +1,15 @@
 import { AgentInput, AgentOpinion } from "../shared/types";
+import { isEnabled } from "../../flags/flags";
 import { analyzeToken } from "../../lib/scoring/scoring";
 import { getDailyClosesUSD } from "../../providers/coingecko/history";
 import { pctReturns, stdev, maxDrawdown, simpleSharpe, mean } from "../../lib/quant/stats";
 
 export async function valuationAgent(input: AgentInput): Promise<AgentOpinion> {
+  const useV2 = await isEnabled("agent.valuation.v2", { userId: (input as any).userId, plan: (input as any).plan });
+  if (useV2) {
+    // Placeholder for V2 path: currently reuse existing analysis for canary routing
+    // In a future step, replace with runValuationV2
+  }
   // Base blended score (existing fundamentals/liquidity/holders)
   const analysis = await analyzeToken(input.token);
 

@@ -66,6 +66,8 @@ model User {
   updatedAt        DateTime    @updatedAt
   apiKeys          ApiKey[]
   portfolios       Portfolio[]
+  featureOverrides FeatureOverride[]
+  auditLogs        AuditLog[]
 }
 
 model ApiKey {
@@ -85,6 +87,7 @@ model ApiKey {
   usages         ApiUsage[]
   usagesDaily    ApiUsageDaily[]
   watchItems     WatchItem[]
+  auditLogs      AuditLog[]
 }
 
 model ApiUsage {
@@ -196,4 +199,47 @@ model Holding {
   portfolio   Portfolio @relation(fields: [portfolioId], references: [id])
 
   @@unique([portfolioId, token])
+}
+
+model FeatureFlag {
+  id          Int      @id @default(autoincrement())
+  key         String   @unique
+  description String?
+  defaultOn   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  overrides   FeatureOverride[]
+}
+
+model FeatureOverride {
+  id        Int      @id @default(autoincrement())
+  flagId    Int
+  userId    Int?
+  plan      String?
+  isOn      Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  flag FeatureFlag @relation(fields: [flagId], references: [id])
+  user User?       @relation(fields: [userId], references: [id])
+
+  @@index([flagId, userId, plan])
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  apiKeyId  Int?
+  action    String
+  target    String?
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  user   User?   @relation(fields: [userId], references: [id])
+  apiKey ApiKey? @relation(fields: [apiKeyId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([apiKeyId, createdAt])
+  @@index([action, createdAt])
 }

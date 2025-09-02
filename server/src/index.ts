@@ -1,5 +1,6 @@
 // src/index.ts
 import "dotenv/config";
+import { env } from "./config/env";
 import express from "express";
 import type { Request, Response, NextFunction, ErrorRequestHandler } from "express";
 import cors from "cors";
@@ -24,18 +25,21 @@ import { scheduleAlertEvaluator } from "./jobs/alerts/evaluator";
 import swaggerUi from "swagger-ui-express";
 import { loadOpenApiV1 } from "./docs/openapi";
 import path from "path";
+import { APP_VERSION } from "./version";
+import { getRedis } from "./cache/redis";
+import { audit } from "./audit/log";
 
 const app = express();
-const port = Number(process.env.PORT || 3000);
+const port = env.PORT;
 
 // Initialize Sentry + logging
 initSentry();
 
 // Debug environment variables
 console.log("Environment check:");
-console.log("DEMO_API_KEY:", process.env.DEMO_API_KEY ? "SET" : "NOT SET");
-console.log("NODE_ENV:", process.env.NODE_ENV);
-console.log("DATABASE_URL:", process.env.DATABASE_URL ? "SET" : "NOT SET");
+console.log("DEMO_API_KEY:", env.DEMO_API_KEY ? "SET" : "NOT SET");
+console.log("NODE_ENV:", env.NODE_ENV);
+console.log("DATABASE_URL:", env.DATABASE_URL ? "SET" : "NOT SET");
 
 // Sentry request/tracing handlers FIRST (only if Sentry is available)
 // TODO: Fix Sentry v10+ integration
@@ -220,7 +224,7 @@ const v1 = express.Router();
 v1.use(apiAuth, logApiUsage);
 // --- Stripe checkout route (subscription) ---
 import Stripe from "stripe";
-const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2025-08-27.basil" }) : null;
+const stripe = env.STRIPE_SECRET_KEY ? new Stripe(env.STRIPE_SECRET_KEY, { apiVersion: "2025-08-27.basil" }) : null;
 
 v1.post("/checkout", async (req, res) => {
   if (!stripe) return fail(res, 500, "stripe_not_configured");
@@ -230,7 +234,7 @@ v1.post("/checkout", async (req, res) => {
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer_email: email,
-      line_items: [{ price: String(process.env.STRIPE_PRICE_ID || ""), quantity: 1 }],
+      line_items: [{ price: String(env.STRIPE_PRICE_ID || ""), quantity: 1 }],
       success_url: String(process.env.FRONTEND_SUCCESS_URL || "http://localhost:5173/success?session_id={CHECKOUT_SESSION_ID}"),
       cancel_url: String(process.env.FRONTEND_CANCEL_URL || "http://localhost:5173/cancel"),
     });
@@ -408,6 +412,36 @@ v1.get("/analytics/usage", async (req, res) => {
   }
 });
 
+// Ops metrics endpoint
+v1.get("/metrics/ops", async (_req, res) => {
+  const now = new Date();
+  let dbOk = true;
+  try { await prisma.$queryRaw`SELECT 1`; } catch { dbOk = false; }
+  let redisOk = true;
+  const r = getRedis();
+  try { if (r) await r.ping(); } catch { redisOk = false; }
+
+  const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const y = new Date(todayUTC.getTime() - 24*3600*1000);
+  const rows = await (prisma as any).apiUsageDaily.findMany({ where: { date: y } });
+  const sum = rows.reduce((a: any, r: any) => {
+    a.req += r.requests; a.ok += r.ok2xx;
+    if (typeof r.p95LatencyMs === "number") a.p95s.push(r.p95LatencyMs);
+    return a;
+  }, { req: 0, ok: 0, p95s: [] as number[] });
+
+  const okRate = sum.req ? sum.ok / sum.req : null;
+  const p95 = sum.p95s.length ? sum.p95s.sort((a: number,b: number)=>a-b)[Math.floor(0.95*(sum.p95s.length-1))] : null;
+
+  return ok(res, {
+    version: APP_VERSION,
+    env: env.NODE_ENV,
+    time: now.toISOString(),
+    dbOk, redisOk,
+    slo: { okRate, p95LatencyMs: p95 },
+  });
+});
+
 // WATCHLIST CRUD (per API key)
 v1.get("/watchlist", async (req, res) => {
   const key = (req as any).apiKey;
@@ -425,6 +459,10 @@ v1.post("/watchlist", async (req, res) => {
       update: {},
       create: { apiKeyId: key.id, token },
     });
+    try {
+      const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+      await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "watchlist.add", target: token });
+    } catch {}
     return ok(res, row);
   } catch { return fail(res, 500, "watchlist_upsert_failed"); }
 });
@@ -433,6 +471,10 @@ v1.delete("/watchlist/:token", async (req, res) => {
   const key = (req as any).apiKey;
   const token = String(req.params.token || "");
   await prisma.watchItem.deleteMany({ where: { apiKeyId: key.id, token } });
+  try {
+    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "watchlist.remove", target: token });
+  } catch {}
   return ok(res, { removed: token });
 });
 
@@ -452,6 +494,10 @@ v1.post("/alerts", async (req, res) => {
   const target = String(req.body?.target || "");
   if (!token || !type || !target) return fail(res, 400, "token_type_target_required");
   const row = await prisma.alert.create({ data: { apiKeyId: key.id, token, type, condition, channel, target } });
+  try {
+    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "alert.create", target: token, meta: { type, targetUrl: target } });
+  } catch {}
   return ok(res, row);
 });
 
@@ -461,6 +507,10 @@ v1.patch("/alerts/:id/toggle", async (req, res) => {
   const a = await prisma.alert.findFirst({ where: { id, apiKeyId: key.id } });
   if (!a) return fail(res, 404, "alert_not_found");
   const row = await prisma.alert.update({ where: { id }, data: { isActive: !a.isActive } });
+  try {
+    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "alert.toggle", target: String(id), meta: { active: row.isActive } });
+  } catch {}
   return ok(res, row);
 });
 
@@ -468,6 +518,10 @@ v1.delete("/alerts/:id", async (req, res) => {
   const key = (req as any).apiKey;
   const id = Number(req.params.id);
   await prisma.alert.deleteMany({ where: { id, apiKeyId: key.id } });
+  try {
+    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "alert.delete", target: String(id) });
+  } catch {}
   return ok(res, { removed: id });
 });
 
@@ -503,6 +557,21 @@ ui.get("/watchlist", async (req, res) => {
   const rows = await prisma.watchItem.findMany({ where: { apiKeyId: key.id }, orderBy: { createdAt: "desc" } });
   return ok(res, rows);
 });
+// Minimal audit logs viewer
+ui.get("/audit", async (req, res) => {
+  const key = (req as any).apiKey;
+  const k = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+  if (!k?.user) return res.status(500).json({ ok:false, error:"demo_user_missing" });
+  const days = Number((req.query as any).days || 30);
+  const since = new Date(Date.now() - days * 24 * 3600 * 1000);
+  const rows = await (prisma as any).auditLog.findMany({
+    where: { userId: k.user.id, createdAt: { gte: since } },
+    orderBy: { createdAt: "desc" },
+    take: 200,
+  });
+  return ok(res, rows);
+});
+
 
 ui.post("/watchlist", async (req, res) => {
   const key = (req as any).apiKey;
@@ -513,6 +582,10 @@ ui.post("/watchlist", async (req, res) => {
     update: {},
     create: { apiKeyId: key.id, token },
   });
+  try {
+    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "watchlist.add", target: token });
+  } catch {}
   return ok(res, row);
 });
 
@@ -520,6 +593,10 @@ ui.delete("/watchlist/:token", async (req, res) => {
   const key = (req as any).apiKey;
   const token = String(req.params.token || "");
   await prisma.watchItem.deleteMany({ where: { apiKeyId: key.id, token } });
+  try {
+    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "watchlist.remove", target: token });
+  } catch {}
   return ok(res, { removed: token });
 });
 
@@ -539,6 +616,10 @@ ui.post("/alerts", async (req, res) => {
   const target = String(req.body?.target || "");
   if (!token || !type || !target) return fail(res, 400, "token_type_target_required");
   const row = await prisma.alert.create({ data: { apiKeyId: key.id, token, type, condition, channel, target } });
+  try {
+    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "alert.create", target: token, meta: { type, targetUrl: target } });
+  } catch {}
   return ok(res, row);
 });
 
@@ -548,6 +629,10 @@ ui.patch("/alerts/:id/toggle", async (req, res) => {
   const a = await prisma.alert.findFirst({ where: { id, apiKeyId: key.id } });
   if (!a) return fail(res, 404, "alert_not_found");
   const row = await prisma.alert.update({ where: { id }, data: { isActive: !a.isActive } });
+  try {
+    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "alert.toggle", target: String(id), meta: { active: row.isActive } });
+  } catch {}
   return ok(res, row);
 });
 
@@ -555,6 +640,10 @@ ui.delete("/alerts/:id", async (req, res) => {
   const key = (req as any).apiKey;
   const id = Number(req.params.id);
   await prisma.alert.deleteMany({ where: { id, apiKeyId: key.id } });
+  try {
+    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "alert.delete", target: String(id) });
+  } catch {}
   return ok(res, { removed: id });
 });
 
