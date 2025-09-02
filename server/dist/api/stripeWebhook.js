@@ -5,7 +5,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.stripeWebhook = stripeWebhook;
 const stripe_1 = __importDefault(require("stripe"));
-const stripe = process.env.STRIPE_SECRET_KEY ? new stripe_1.default(process.env.STRIPE_SECRET_KEY, {
+const env_1 = require("../config/env");
+const stripe = env_1.env.STRIPE_SECRET_KEY ? new stripe_1.default(env_1.env.STRIPE_SECRET_KEY, {
     apiVersion: "2025-08-27.basil",
 }) : null;
 async function stripeWebhook(req, res) {
@@ -17,7 +18,7 @@ async function stripeWebhook(req, res) {
     let event;
     try {
         // req.body is a Buffer because we mount this route with express.raw({ type: "application/json" })
-        event = stripe.webhooks.constructEvent(req.body, signature, process.env.STRIPE_WEBHOOK_SECRET);
+        event = stripe.webhooks.constructEvent(req.body, signature, env_1.env.STRIPE_WEBHOOK_SECRET);
     }
     catch (err) {
         return res.status(400).send(`Webhook Error: ${err.message}`);

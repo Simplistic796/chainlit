@@ -5,9 +5,9 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "ts-node-dev src/index.ts",
-    "prebuild": "node -e \"const {execSync}=require('child_process');const v=execSync('git rev-parse --short HEAD').toString().trim();require('fs').writeFileSync('src/version.ts', `export const APP_VERSION = '${v}';\\n`);\"",
+    "prebuild": "node -e \"const {execSync}=require('child_process');const v=execSync('git rev-parse --short HEAD').toString().trim();require('fs').writeFileSync('src/version.ts', 'export const APP_VERSION = \\'' + v + '\\';\\n');\"",
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "NODE_OPTIONS='--enable-source-maps --unhandled-rejections=strict' node dist/index.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev --name init",
     "migrate:deploy": "prisma migrate deploy",

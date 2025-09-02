@@ -1,10 +1,16 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.valuationAgent = valuationAgent;
+const flags_1 = require("../../flags/flags");
 const scoring_1 = require("../../lib/scoring/scoring");
 const history_1 = require("../../providers/coingecko/history");
 const stats_1 = require("../../lib/quant/stats");
 async function valuationAgent(input) {
+    const useV2 = await (0, flags_1.isEnabled)("agent.valuation.v2", { userId: input.userId, plan: input.plan });
+    if (useV2) {
+        // Placeholder for V2 path: currently reuse existing analysis for canary routing
+        // In a future step, replace with runValuationV2
+    }
     // Base blended score (existing fundamentals/liquidity/holders)
     const analysis = await (0, scoring_1.analyzeToken)(input.token);
     // Pull 60d closes for better stability (falls back to 30 if 60 fails)

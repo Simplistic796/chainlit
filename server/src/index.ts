@@ -1,5 +1,16 @@
 // src/index.ts
 import "dotenv/config";
+
+// Global crash handlers - must be first
+process.on("uncaughtException", (err) => {
+  console.error("[fatal] uncaughtException:", err);
+  process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[fatal] unhandledRejection:", reason);
+  process.exit(1);
+});
+
 import { env } from "./config/env";
 import express from "express";
 import type { Request, Response, NextFunction, ErrorRequestHandler } from "express";
@@ -11,7 +22,7 @@ import { z } from "zod";
 import { prisma } from "./db/prisma";
 import { analyzeToken } from "./lib/scoring/scoring";
 import { enqueueAnalyze, analyzeEvents } from "./jobs/queue";
-import { cacheGetJSON, getRedis } from "./cache/redis";
+import { cacheGetJSON } from "./cache/redis";
 import { enqueueDebate } from "./jobs/consensus/queue";
 import { logger } from "./observability/logger";
 import { initSentry } from "./observability/sentry";
@@ -31,6 +42,12 @@ import { audit } from "./audit/log";
 
 const app = express();
 const port = env.PORT;
+
+// Boot banner
+console.log("[boot] starting server…", {
+  node: process.version,
+  env: env.NODE_ENV,
+});
 
 // Initialize Sentry + logging
 initSentry();
@@ -461,7 +478,7 @@ v1.post("/watchlist", async (req, res) => {
     });
     try {
       const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-      await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "watchlist.add", target: token });
+      await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "watchlist.add", target: token });
     } catch {}
     return ok(res, row);
   } catch { return fail(res, 500, "watchlist_upsert_failed"); }
@@ -473,7 +490,7 @@ v1.delete("/watchlist/:token", async (req, res) => {
   await prisma.watchItem.deleteMany({ where: { apiKeyId: key.id, token } });
   try {
     const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "watchlist.remove", target: token });
+    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "watchlist.remove", target: token });
   } catch {}
   return ok(res, { removed: token });
 });
@@ -496,7 +513,7 @@ v1.post("/alerts", async (req, res) => {
   const row = await prisma.alert.create({ data: { apiKeyId: key.id, token, type, condition, channel, target } });
   try {
     const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "alert.create", target: token, meta: { type, targetUrl: target } });
+    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.create", target: token, meta: { type, targetUrl: target } });
   } catch {}
   return ok(res, row);
 });
@@ -509,7 +526,7 @@ v1.patch("/alerts/:id/toggle", async (req, res) => {
   const row = await prisma.alert.update({ where: { id }, data: { isActive: !a.isActive } });
   try {
     const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "alert.toggle", target: String(id), meta: { active: row.isActive } });
+    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.toggle", target: String(id), meta: { active: row.isActive } });
   } catch {}
   return ok(res, row);
 });
@@ -520,7 +537,7 @@ v1.delete("/alerts/:id", async (req, res) => {
   await prisma.alert.deleteMany({ where: { id, apiKeyId: key.id } });
   try {
     const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "alert.delete", target: String(id) });
+    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.delete", target: String(id) });
   } catch {}
   return ok(res, { removed: id });
 });
@@ -584,7 +601,7 @@ ui.post("/watchlist", async (req, res) => {
   });
   try {
     const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "watchlist.add", target: token });
+    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "watchlist.add", target: token });
   } catch {}
   return ok(res, row);
 });
@@ -595,7 +612,7 @@ ui.delete("/watchlist/:token", async (req, res) => {
   await prisma.watchItem.deleteMany({ where: { apiKeyId: key.id, token } });
   try {
     const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "watchlist.remove", target: token });
+    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "watchlist.remove", target: token });
   } catch {}
   return ok(res, { removed: token });
 });
@@ -618,7 +635,7 @@ ui.post("/alerts", async (req, res) => {
   const row = await prisma.alert.create({ data: { apiKeyId: key.id, token, type, condition, channel, target } });
   try {
     const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "alert.create", target: token, meta: { type, targetUrl: target } });
+    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.create", target: token, meta: { type, targetUrl: target } });
   } catch {}
   return ok(res, row);
 });
@@ -631,7 +648,7 @@ ui.patch("/alerts/:id/toggle", async (req, res) => {
   const row = await prisma.alert.update({ where: { id }, data: { isActive: !a.isActive } });
   try {
     const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "alert.toggle", target: String(id), meta: { active: row.isActive } });
+    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.toggle", target: String(id), meta: { active: row.isActive } });
   } catch {}
   return ok(res, row);
 });
@@ -642,7 +659,7 @@ ui.delete("/alerts/:id", async (req, res) => {
   await prisma.alert.deleteMany({ where: { id, apiKeyId: key.id } });
   try {
     const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id, apiKeyId: key.id, action: "alert.delete", target: String(id) });
+    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.delete", target: String(id) });
   } catch {}
   return ok(res, { removed: id });
 });

@@ -1,0 +1,1 @@
+{"version":3,"file":"log.js","sourceRoot":"","sources":["../../src/audit/log.ts"],"names":[],"mappings":";;AAEA,sBAYC;AAdD,yCAAsC;AAE/B,KAAK,UAAU,KAAK,CAAC,IAM3B;IACC,IAAI,CAAC;QACH,MAAO,eAAc,CAAC,QAAQ,CAAC,MAAM,CAAC,EAAE,IAAI,EAAE,IAAW,EAAE,CAAC,CAAC;IAC/D,CAAC;IAAC,MAAM,CAAC;QACP,cAAc;IAChB,CAAC;AACH,CAAC"}

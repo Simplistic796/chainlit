@@ -1,10 +1,10 @@
 import { prisma } from "../db/prisma";
 
 export async function audit(opts: {
-  userId?: number;
-  apiKeyId?: number;
+  userId?: number | undefined;
+  apiKeyId?: number | undefined;
   action: string;
-  target?: string;
+  target?: string | undefined;
   meta?: any;
 }) {
   try {

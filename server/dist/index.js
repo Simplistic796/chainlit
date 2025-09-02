@@ -38,6 +38,16 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 // src/index.ts
 require("dotenv/config");
+// Global crash handlers - must be first
+process.on("uncaughtException", (err) => {
+    console.error("[fatal] uncaughtException:", err);
+    process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+    console.error("[fatal] unhandledRejection:", reason);
+    process.exit(1);
+});
+const env_1 = require("./config/env");
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const body_parser_1 = __importDefault(require("body-parser"));
@@ -55,15 +65,26 @@ const regression_1 = require("./lib/quant/regression");
 const pino_http_1 = __importDefault(require("pino-http"));
 const uuid_1 = require("uuid");
 const mw_1 = require("./api/mw");
+const swagger_ui_express_1 = __importDefault(require("swagger-ui-express"));
+const openapi_1 = require("./docs/openapi");
+const path_1 = __importDefault(require("path"));
+const version_1 = require("./version");
+const redis_2 = require("./cache/redis");
+const log_1 = require("./audit/log");
 const app = (0, express_1.default)();
-const port = Number(process.env.PORT || 3000);
+const port = env_1.env.PORT;
+// Boot banner
+console.log("[boot] starting server…", {
+    node: process.version,
+    env: env_1.env.NODE_ENV,
+});
 // Initialize Sentry + logging
 (0, sentry_1.initSentry)();
 // Debug environment variables
 console.log("Environment check:");
-console.log("DEMO_API_KEY:", process.env.DEMO_API_KEY ? "SET" : "NOT SET");
-console.log("NODE_ENV:", process.env.NODE_ENV);
-console.log("DATABASE_URL:", process.env.DATABASE_URL ? "SET" : "NOT SET");
+console.log("DEMO_API_KEY:", env_1.env.DEMO_API_KEY ? "SET" : "NOT SET");
+console.log("NODE_ENV:", env_1.env.NODE_ENV);
+console.log("DATABASE_URL:", env_1.env.DATABASE_URL ? "SET" : "NOT SET");
 // Sentry request/tracing handlers FIRST (only if Sentry is available)
 // TODO: Fix Sentry v10+ integration
 // if (process.env.SENTRY_DSN) {
@@ -106,6 +127,23 @@ app.use(express_1.default.json());
 app.get("/health", (req, res) => {
     res.send("Server is running 🚀");
 });
+// OpenAPI JSON (v1)
+app.get("/v1/openapi.json", (_req, res) => {
+    try {
+        res.json((0, openapi_1.loadOpenApiV1)());
+    }
+    catch (e) {
+        res.status(500).json({ ok: false, error: "openapi_load_failed", details: e?.message ?? String(e) });
+    }
+});
+// Swagger UI at /docs (load via JSON endpoint to avoid startup load failures)
+app.use("/docs", swagger_ui_express_1.default.serve, swagger_ui_express_1.default.setup(undefined, {
+    swaggerOptions: { url: "/v1/openapi.json", persistAuthorization: true }
+}));
+// Postman collection
+app.get("/postman.json", (_req, res) => {
+    res.sendFile(path_1.default.join(process.cwd(), "public", "postman", "chainlit-v1.postman_collection.json"));
+});
 // Schema to validate query ?token=...
 const AnalyzeQuery = zod_1.z.object({
     token: zod_1.z.string().min(1, "token is required"),
@@ -125,7 +163,7 @@ app.get("/analyze", async (req, res) => {
     catch { }
     // 2) If Redis is available, enqueue a job and wait briefly for it to finish
     try {
-        const r = (0, redis_1.getRedis)();
+        const r = (0, redis_2.getRedis)();
         if (r && queue_1.analyzeEvents) {
             const job = await (0, queue_1.enqueueAnalyze)(token);
             const result = await job.waitUntilFinished(queue_1.analyzeEvents, 8000).catch(() => null);
@@ -215,7 +253,7 @@ const v1 = express_1.default.Router();
 v1.use(mw_1.apiAuth, mw_1.logApiUsage);
 // --- Stripe checkout route (subscription) ---
 const stripe_1 = __importDefault(require("stripe"));
-const stripe = process.env.STRIPE_SECRET_KEY ? new stripe_1.default(process.env.STRIPE_SECRET_KEY, { apiVersion: "2025-08-27.basil" }) : null;
+const stripe = env_1.env.STRIPE_SECRET_KEY ? new stripe_1.default(env_1.env.STRIPE_SECRET_KEY, { apiVersion: "2025-08-27.basil" }) : null;
 v1.post("/checkout", async (req, res) => {
     if (!stripe)
         return (0, mw_1.fail)(res, 500, "stripe_not_configured");
@@ -226,7 +264,7 @@ v1.post("/checkout", async (req, res) => {
         const session = await stripe.checkout.sessions.create({
             mode: "subscription",
             customer_email: email,
-            line_items: [{ price: String(process.env.STRIPE_PRICE_ID || ""), quantity: 1 }],
+            line_items: [{ price: String(env_1.env.STRIPE_PRICE_ID || ""), quantity: 1 }],
             success_url: String(process.env.FRONTEND_SUCCESS_URL || "http://localhost:5173/success?session_id={CHECKOUT_SESSION_ID}"),
             cancel_url: String(process.env.FRONTEND_CANCEL_URL || "http://localhost:5173/cancel"),
         });
@@ -393,6 +431,45 @@ v1.get("/analytics/usage", async (req, res) => {
         return (0, mw_1.fail)(res, 500, "analytics_query_failed");
     }
 });
+// Ops metrics endpoint
+v1.get("/metrics/ops", async (_req, res) => {
+    const now = new Date();
+    let dbOk = true;
+    try {
+        await prisma_1.prisma.$queryRaw `SELECT 1`;
+    }
+    catch {
+        dbOk = false;
+    }
+    let redisOk = true;
+    const r = (0, redis_2.getRedis)();
+    try {
+        if (r)
+            await r.ping();
+    }
+    catch {
+        redisOk = false;
+    }
+    const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const y = new Date(todayUTC.getTime() - 24 * 3600 * 1000);
+    const rows = await prisma_1.prisma.apiUsageDaily.findMany({ where: { date: y } });
+    const sum = rows.reduce((a, r) => {
+        a.req += r.requests;
+        a.ok += r.ok2xx;
+        if (typeof r.p95LatencyMs === "number")
+            a.p95s.push(r.p95LatencyMs);
+        return a;
+    }, { req: 0, ok: 0, p95s: [] });
+    const okRate = sum.req ? sum.ok / sum.req : null;
+    const p95 = sum.p95s.length ? sum.p95s.sort((a, b) => a - b)[Math.floor(0.95 * (sum.p95s.length - 1))] : null;
+    return (0, mw_1.ok)(res, {
+        version: version_1.APP_VERSION,
+        env: env_1.env.NODE_ENV,
+        time: now.toISOString(),
+        dbOk, redisOk,
+        slo: { okRate, p95LatencyMs: p95 },
+    });
+});
 // WATCHLIST CRUD (per API key)
 v1.get("/watchlist", async (req, res) => {
     const key = req.apiKey;
@@ -410,6 +487,11 @@ v1.post("/watchlist", async (req, res) => {
             update: {},
             create: { apiKeyId: key.id, token },
         });
+        try {
+            const fullKey = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+            await (0, log_1.audit)({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "watchlist.add", target: token });
+        }
+        catch { }
         return (0, mw_1.ok)(res, row);
     }
     catch {
@@ -420,6 +502,11 @@ v1.delete("/watchlist/:token", async (req, res) => {
     const key = req.apiKey;
     const token = String(req.params.token || "");
     await prisma_1.prisma.watchItem.deleteMany({ where: { apiKeyId: key.id, token } });
+    try {
+        const fullKey = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+        await (0, log_1.audit)({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "watchlist.remove", target: token });
+    }
+    catch { }
     return (0, mw_1.ok)(res, { removed: token });
 });
 // ALERTS CRUD
@@ -438,6 +525,11 @@ v1.post("/alerts", async (req, res) => {
     if (!token || !type || !target)
         return (0, mw_1.fail)(res, 400, "token_type_target_required");
     const row = await prisma_1.prisma.alert.create({ data: { apiKeyId: key.id, token, type, condition, channel, target } });
+    try {
+        const fullKey = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+        await (0, log_1.audit)({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.create", target: token, meta: { type, targetUrl: target } });
+    }
+    catch { }
     return (0, mw_1.ok)(res, row);
 });
 v1.patch("/alerts/:id/toggle", async (req, res) => {
@@ -447,12 +539,22 @@ v1.patch("/alerts/:id/toggle", async (req, res) => {
     if (!a)
         return (0, mw_1.fail)(res, 404, "alert_not_found");
     const row = await prisma_1.prisma.alert.update({ where: { id }, data: { isActive: !a.isActive } });
+    try {
+        const fullKey = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+        await (0, log_1.audit)({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.toggle", target: String(id), meta: { active: row.isActive } });
+    }
+    catch { }
     return (0, mw_1.ok)(res, row);
 });
 v1.delete("/alerts/:id", async (req, res) => {
     const key = req.apiKey;
     const id = Number(req.params.id);
     await prisma_1.prisma.alert.deleteMany({ where: { id, apiKeyId: key.id } });
+    try {
+        const fullKey = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+        await (0, log_1.audit)({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.delete", target: String(id) });
+    }
+    catch { }
     return (0, mw_1.ok)(res, { removed: id });
 });
 // Minimal docs endpoint
@@ -486,6 +588,21 @@ ui.get("/watchlist", async (req, res) => {
     const rows = await prisma_1.prisma.watchItem.findMany({ where: { apiKeyId: key.id }, orderBy: { createdAt: "desc" } });
     return (0, mw_1.ok)(res, rows);
 });
+// Minimal audit logs viewer
+ui.get("/audit", async (req, res) => {
+    const key = req.apiKey;
+    const k = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+    if (!k?.user)
+        return res.status(500).json({ ok: false, error: "demo_user_missing" });
+    const days = Number(req.query.days || 30);
+    const since = new Date(Date.now() - days * 24 * 3600 * 1000);
+    const rows = await prisma_1.prisma.auditLog.findMany({
+        where: { userId: k.user.id, createdAt: { gte: since } },
+        orderBy: { createdAt: "desc" },
+        take: 200,
+    });
+    return (0, mw_1.ok)(res, rows);
+});
 ui.post("/watchlist", async (req, res) => {
     const key = req.apiKey;
     const token = String(req.body?.token || "").trim();
@@ -496,12 +613,22 @@ ui.post("/watchlist", async (req, res) => {
         update: {},
         create: { apiKeyId: key.id, token },
     });
+    try {
+        const fullKey = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+        await (0, log_1.audit)({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "watchlist.add", target: token });
+    }
+    catch { }
     return (0, mw_1.ok)(res, row);
 });
 ui.delete("/watchlist/:token", async (req, res) => {
     const key = req.apiKey;
     const token = String(req.params.token || "");
     await prisma_1.prisma.watchItem.deleteMany({ where: { apiKeyId: key.id, token } });
+    try {
+        const fullKey = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+        await (0, log_1.audit)({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "watchlist.remove", target: token });
+    }
+    catch { }
     return (0, mw_1.ok)(res, { removed: token });
 });
 // --- Alerts (same bodies as /v1) ---
@@ -520,6 +647,11 @@ ui.post("/alerts", async (req, res) => {
     if (!token || !type || !target)
         return (0, mw_1.fail)(res, 400, "token_type_target_required");
     const row = await prisma_1.prisma.alert.create({ data: { apiKeyId: key.id, token, type, condition, channel, target } });
+    try {
+        const fullKey = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+        await (0, log_1.audit)({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.create", target: token, meta: { type, targetUrl: target } });
+    }
+    catch { }
     return (0, mw_1.ok)(res, row);
 });
 ui.patch("/alerts/:id/toggle", async (req, res) => {
@@ -529,12 +661,22 @@ ui.patch("/alerts/:id/toggle", async (req, res) => {
     if (!a)
         return (0, mw_1.fail)(res, 404, "alert_not_found");
     const row = await prisma_1.prisma.alert.update({ where: { id }, data: { isActive: !a.isActive } });
+    try {
+        const fullKey = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+        await (0, log_1.audit)({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.toggle", target: String(id), meta: { active: row.isActive } });
+    }
+    catch { }
     return (0, mw_1.ok)(res, row);
 });
 ui.delete("/alerts/:id", async (req, res) => {
     const key = req.apiKey;
     const id = Number(req.params.id);
     await prisma_1.prisma.alert.deleteMany({ where: { id, apiKeyId: key.id } });
+    try {
+        const fullKey = await prisma_1.prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+        await (0, log_1.audit)({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.delete", target: String(id) });
+    }
+    catch { }
     return (0, mw_1.ok)(res, { removed: id });
 });
 // --- Portfolio endpoints ---
@@ -711,7 +853,7 @@ ui.get("/portfolio/pnl", async (req, res) => {
         if (!k?.user)
             return (0, mw_1.fail)(res, 500, "demo_user_missing");
         // Check Redis cache first
-        const r = (0, redis_1.getRedis)();
+        const r = (0, redis_2.getRedis)();
         const cacheKey = `pnl:${k.user.id}:${days}`;
         if (r) {
             const hit = await r.get(cacheKey);

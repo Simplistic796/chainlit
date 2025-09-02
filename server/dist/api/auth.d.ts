@@ -3,13 +3,13 @@ export declare function findApiKey(rawKey: string): Promise<{
     id: number;
     createdAt: Date;
     name: string;
-    keyHash: string;
+    userId: number | null;
     plan: string;
+    keyHash: string;
     requestsPerMin: number;
     requestsPerDay: number;
     isActive: boolean;
     updatedAt: Date;
-    userId: number | null;
 } | null>;
 /** Generate a new raw key (returns {raw, hash}) — store hash only! */
 export declare function generateRawKey(): {
