@@ -21,6 +21,9 @@ import { v4 as uuidv4 } from "uuid";
 import { apiAuth, logApiUsage, ok, fail } from "./api/mw";
 import { scheduleDaily, dailyWorker } from "./jobs/backtest/dailySignals";
 import { scheduleAlertEvaluator } from "./jobs/alerts/evaluator";
+import swaggerUi from "swagger-ui-express";
+import { loadOpenApiV1 } from "./docs/openapi";
+import path from "path";
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -84,6 +87,21 @@ app.use(express.json());
 
 app.get("/health", (req: Request, res: Response) => {
   res.send("Server is running 🚀");
+});
+
+// OpenAPI JSON (v1)
+app.get("/v1/openapi.json", (_req: Request, res: Response) => {
+  res.json(loadOpenApiV1());
+});
+
+// Swagger UI at /docs
+app.use("/docs", swaggerUi.serve, swaggerUi.setup(loadOpenApiV1(), {
+  swaggerOptions: { persistAuthorization: true }
+}));
+
+// Postman collection
+app.get("/postman.json", (_req: Request, res: Response) => {
+  res.sendFile(path.join(process.cwd(), "public", "postman", "chainlit-v1.postman_collection.json"));
 });
 
 // Schema to validate query ?token=...

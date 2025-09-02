@@ -7,6 +7,7 @@ export default function NavBar() {
       <Link to="/" className="font-bold text-xl">ChainLit</Link>
       <div className="flex items-center gap-4">
         <Link to="/pricing" className="text-sm font-medium hover:underline">Pricing</Link>
+        <a href={`${import.meta.env.VITE_API_BASE}/docs`} target="_blank" rel="noreferrer" className="text-sm font-medium hover:underline">API Docs</a>
         <AccountBadge />
       </div>
     </nav>

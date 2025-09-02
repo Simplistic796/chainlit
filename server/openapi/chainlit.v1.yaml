@@ -1,0 +1,252 @@
+openapi: 3.1.0
+info:
+  title: ChainLit API
+  version: 1.0.0
+  description: >
+    Versioned API for scoring, consensus, backtesting, and account usage.
+    All requests must include an API key header: `x-api-key: <YOUR_KEY>`.
+servers:
+  - url: https://chainlit-rwy2.onrender.com
+security:
+  - ApiKeyAuth: []
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+  schemas:
+    AnalyzeResult:
+      type: object
+      properties:
+        token: { type: string }
+        score: { type: integer, minimum: 0, maximum: 100 }
+        risk: { type: string, enum: [Low, Medium, High] }
+        outlook: { type: string, enum: [Bearish, Neutral, Bullish] }
+        evidence:
+          type: object
+          additionalProperties: true
+    ConsensusRun:
+      type: object
+      properties:
+        token: { type: string }
+        decision: { type: string, enum: [BUY, HOLD, SELL] }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        rationales:
+          type: array
+          items: { type: string }
+        createdAt: { type: string, format: date-time }
+    AgentOpinion:
+      type: object
+      properties:
+        id: { type: integer }
+        agentType: { type: string }
+        output:
+          type: object
+          properties:
+            agent: { type: string }
+            stance: { type: string, enum: [BUY, HOLD, SELL] }
+            confidence: { type: number, minimum: 0, maximum: 1 }
+            rationale: { type: string }
+        createdAt: { type: string, format: date-time }
+    BacktestSummary:
+      type: object
+      properties:
+        windowDays: { type: integer }
+        cumulativeReturn: { type: number }
+        meanDaily: { type: number }
+        stdevDaily: { type: number }
+        sharpeDaily: { type: number }
+        maxDrawdown: { type: number }
+    UsageDaily:
+      type: object
+      properties:
+        date: { type: string, format: date }
+        requests: { type: integer }
+        ok2xx: { type: integer }
+        client4xx: { type: integer }
+        server5xx: { type: integer }
+        avgLatencyMs: { type: number, nullable: true }
+        p95LatencyMs: { type: number, nullable: true }
+
+paths:
+  /v1/health:
+    get:
+      summary: Health (authenticated)
+      security: [{ ApiKeyAuth: [] }]
+      responses:
+        "200": { description: OK }
+
+  /v1/analyze:
+    get:
+      summary: Analyze a token
+      security: [{ ApiKeyAuth: [] }]
+      parameters:
+        - in: query
+          name: token
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Analysis result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: "#/components/schemas/AnalyzeResult" }
+
+  /v1/debate:
+    post:
+      summary: Enqueue a debate and optionally wait briefly
+      security: [{ ApiKeyAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token: { type: string }
+                rounds: { type: integer, default: 3 }
+      responses:
+        "200": { description: Enqueued or finished }
+
+  /v1/consensus/{token}:
+    get:
+      summary: Latest consensus
+      security: [{ ApiKeyAuth: [] }]
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Latest run
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: "#/components/schemas/ConsensusRun" }
+
+  /v1/consensus/{token}/opinions:
+    get:
+      summary: Recent agent opinions
+      security: [{ ApiKeyAuth: [] }]
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 12 }
+      responses:
+        "200":
+          description: Opinions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/AgentOpinion" }
+
+  /v1/backtest/run:
+    post:
+      summary: Run daily signal collection once
+      security: [{ ApiKeyAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                limit: { type: integer, default: 25 }
+      responses:
+        "200": { description: Enqueued }
+
+  /v1/backtest/signals:
+    get:
+      summary: List signals for a date
+      security: [{ ApiKeyAuth: [] }]
+      parameters:
+        - in: query
+          name: date
+          required: true
+          schema: { type: string, format: date }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 100 }
+      responses:
+        "200": { description: Signals list }
+
+  /v1/backtest/summary:
+    get:
+      summary: Backtest summary for a window
+      security: [{ ApiKeyAuth: [] }]
+      parameters:
+        - in: query
+          name: days
+          schema: { type: integer, default: 30 }
+      responses:
+        "200":
+          description: Summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: "#/components/schemas/BacktestSummary" }
+
+  /v1/analytics/usage:
+    get:
+      summary: Per-key daily usage between dates
+      security: [{ ApiKeyAuth: [] }]
+      parameters:
+        - in: query
+          name: from
+          required: true
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          required: true
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Usage rows and totals
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      rows:
+                        type: array
+                        items: { $ref: "#/components/schemas/UsageDaily" }
+                      totals:
+                        type: object
+                        properties:
+                          requests: { type: integer }
+                          ok2xx: { type: integer }
+                          client4xx: { type: integer }
+                          server5xx: { type: integer }
+                      topEndpoints:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            endpoint: { type: string }
+                            count: { type: integer }
+
+

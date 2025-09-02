@@ -1,0 +1,44 @@
+{
+  "info": {
+    "name": "ChainLit v1",
+    "_postman_id": "a1111111-b222-4ccc-8ddd-eeeeeeeeeeee",
+    "description": "Core ChainLit endpoints with x-api-key.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "https://chainlit-rwy2.onrender.com" },
+    { "key": "api_key", "value": "ck_xxx_replace" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "x-api-key", "value": "{{api_key}}" }],
+        "url": { "raw": "{{base_url}}/v1/health", "host": ["{{base_url}}"], "path": ["v1","health"] }
+      }
+    },
+    {
+      "name": "Analyze ETH",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "x-api-key", "value": "{{api_key}}" }],
+        "url": { "raw": "{{base_url}}/v1/analyze?token=ETH", "host": ["{{base_url}}"], "path": ["v1","analyze"], "query": [{"key":"token","value":"ETH"}] }
+      }
+    },
+    {
+      "name": "Debate ETH",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "x-api-key", "value": "{{api_key}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{\"token\":\"ETH\",\"rounds\":3}" },
+        "url": { "raw": "{{base_url}}/v1/debate", "host": ["{{base_url}}"], "path": ["v1","debate"] }
+      }
+    }
+  ]
+}
+
+
