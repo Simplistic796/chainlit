@@ -98,9 +98,9 @@ app.get("/v1/openapi.json", (_req: Request, res: Response) => {
   }
 });
 
-// Swagger UI at /docs
-app.use("/docs", swaggerUi.serve, swaggerUi.setup(loadOpenApiV1(), {
-  swaggerOptions: { persistAuthorization: true }
+// Swagger UI at /docs (load via JSON endpoint to avoid startup load failures)
+app.use("/docs", swaggerUi.serve, swaggerUi.setup(undefined, {
+  swaggerOptions: { url: "/v1/openapi.json", persistAuthorization: true }
 }));
 
 // Postman collection
