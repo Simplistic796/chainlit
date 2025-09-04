@@ -88,17 +88,29 @@ app.use(
   })
 );
 
-// CORS: allow localhost and an optional frontend origin from env
+// CORS: allow localhost and frontend origins from env
 const allowedOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   "http://localhost:3000",
 ].concat(env.FRONTEND_ORIGIN ? [env.FRONTEND_ORIGIN] : []);
 
+// Add FRONTEND_ORIGINS support (comma-separated list)
+if (env.FRONTEND_ORIGINS) {
+  const additionalOrigins = env.FRONTEND_ORIGINS
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
+  allowedOrigins.push(...additionalOrigins);
+}
+
+console.log("CORS_ALLOWED_ORIGINS", { allowedOrigins });
+
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true); // non-browser or same-origin
     if (allowedOrigins.includes(origin)) return callback(null, true);
+    console.warn("CORS_REJECTED_ORIGIN", { origin, allowedOrigins });
     // Do not throw; reject CORS headers without breaking the route
     return callback(null, false);
   },
@@ -685,16 +697,62 @@ ui.delete("/alerts/:id", async (req, res) => {
 // --- Portfolio endpoints ---
 // Get or create demo user's single portfolio
 ui.get("/portfolio", async (req, res) => {
-  const key = (req as any).apiKey;
-  const k = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-  if (!k?.user) return fail(res, 500, "demo_user_missing");
+  try {
+    console.log("PORTFOLIO_ROUTE_START", { 
+      timestamp: new Date().toISOString(),
+      apiKeyId: (req as any).apiKey?.id 
+    });
 
-  let p = await prisma.portfolio.findFirst({ where: { userId: k.user.id } });
-  if (!p) {
-    p = await prisma.portfolio.create({ data: { userId: k.user.id, name: "My Portfolio" } });
+    const key = (req as any).apiKey;
+    if (!key?.id) {
+      console.error("PORTFOLIO_ROUTE_ERROR", { error: "apiKey_missing", key });
+      return fail(res, 500, "api_key_missing");
+    }
+
+    console.log("PORTFOLIO_ROUTE_STEP1", { apiKeyId: key.id });
+    
+    const k = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+    if (!k?.user) {
+      console.error("PORTFOLIO_ROUTE_ERROR", { error: "demo_user_missing", apiKeyId: key.id, keyData: k });
+      return fail(res, 500, "demo_user_missing");
+    }
+
+    console.log("PORTFOLIO_ROUTE_STEP2", { userId: k.user.id });
+
+    let p = await prisma.portfolio.findFirst({ where: { userId: k.user.id } });
+    if (!p) {
+      console.log("PORTFOLIO_ROUTE_STEP3", { action: "creating_portfolio", userId: k.user.id });
+      p = await prisma.portfolio.create({ data: { userId: k.user.id, name: "My Portfolio" } });
+    }
+
+    console.log("PORTFOLIO_ROUTE_STEP4", { portfolioId: p.id });
+
+    const holdings = await prisma.holding.findMany({ where: { portfolioId: p.id }, orderBy: { token: "asc" } });
+    
+    console.log("PORTFOLIO_ROUTE_SUCCESS", { 
+      portfolioId: p.id, 
+      holdingsCount: holdings.length,
+      holdings: holdings.map(h => ({ token: h.token, weight: h.weight }))
+    });
+
+    return ok(res, { portfolio: p, holdings });
+  } catch (err: any) {
+    // Log *everything* useful:
+    console.error("PORTFOLIO_ROUTE_ERROR", {
+      message: err?.message,
+      stack: err?.stack,
+      cause: err?.cause,
+      responseStatus: err?.response?.status,
+      responseData: err?.response?.data,
+      name: err?.name,
+      code: err?.code,
+      timestamp: new Date().toISOString()
+    });
+    return res.status(500).json({
+      error: "PORTFOLIO_ROUTE_ERROR",
+      message: err?.message ?? "Unknown error",
+    });
   }
-  const holdings = await prisma.holding.findMany({ where: { portfolioId: p.id }, orderBy: { token: "asc" } });
-  return ok(res, { portfolio: p, holdings });
 });
 
 // Helper function to calculate portfolio metrics
@@ -743,51 +801,107 @@ function calculatePortfolioMetrics(returns: number[]) {
 
 // Shared function to calculate portfolio PnL data
 async function getPortfolioPnlData(userId: number, days: number) {
-  // Get user's portfolio and holdings
-  let portfolio = await prisma.portfolio.findFirst({ where: { userId } });
-  if (!portfolio) {
-    portfolio = await prisma.portfolio.create({ data: { userId, name: "My Portfolio" } });
-  }
-  
-  const holdings = await prisma.holding.findMany({ where: { portfolioId: portfolio.id } });
-  
-  if (holdings.length === 0) {
-    return {
-      windowDays: days,
-      dates: [],
-      portfolio: [],
-      btc: [],
-      eth: [],
-      summary: {
-        cum: 0,
-        mean: 0,
-        stdev: 0,
-        sharpeDaily: 0,
-        maxDD: 0,
-        alphaBTC: 0,
-        betaBTC: 0,
-        alphaETH: 0,
-        betaETH: 0
-      }
-    };
-  }
+  try {
+    console.log("GET_PORTFOLIO_PNL_DATA_START", { userId, days });
 
-  // Get tokens from holdings
-  const tokens = holdings.map(h => h.token);
-  
-  // Import and use the price history provider
-  const { getPriceHistory } = await import("./providers/prices/history");
-  const priceData = await getPriceHistory({ tokens, days });
-  
-  if (!priceData) {
-    throw new Error("failed_to_fetch_price_data");
-  }
+    // Get user's portfolio and holdings
+    let portfolio = await prisma.portfolio.findFirst({ where: { userId } });
+    if (!portfolio) {
+      console.log("GET_PORTFOLIO_PNL_DATA_CREATE_PORTFOLIO", { userId });
+      portfolio = await prisma.portfolio.create({ data: { userId, name: "My Portfolio" } });
+    }
+    
+    const holdings = await prisma.holding.findMany({ where: { portfolioId: portfolio.id } });
+    console.log("GET_PORTFOLIO_PNL_DATA_HOLDINGS", { userId, holdingsCount: holdings.length, holdings: holdings.map(h => ({ token: h.token, weight: h.weight })) });
+    
+    if (holdings.length === 0) {
+      console.log("GET_PORTFOLIO_PNL_DATA_EMPTY_HOLDINGS", { userId });
+      return {
+        windowDays: days,
+        dates: [],
+        portfolio: [],
+        btc: [],
+        eth: [],
+        summary: {
+          cum: 0,
+          mean: 0,
+          stdev: 0,
+          sharpeDaily: 0,
+          maxDD: 0,
+          alphaBTC: 0,
+          betaBTC: 0,
+          alphaETH: 0,
+          betaETH: 0
+        }
+      };
+    }
 
-  const { dates, closes, benchmarks } = priceData;
-  
-  if (dates.length < 2) {
-    throw new Error("insufficient_price_data");
-  }
+    // Get tokens from holdings
+    const tokens = holdings.map(h => h.token);
+    console.log("GET_PORTFOLIO_PNL_DATA_TOKENS", { userId, tokens });
+    
+    // Import and use the price history provider
+    const { getPriceHistory } = await import("./providers/prices/history");
+    console.log("GET_PORTFOLIO_PNL_DATA_FETCH_PRICES", { userId, tokens, days });
+    
+    const priceData = await getPriceHistory({ tokens, days });
+    
+    if (!priceData) {
+      console.error("GET_PORTFOLIO_PNL_DATA_NO_PRICE_DATA", { userId, tokens, days });
+      // Return empty data instead of throwing
+      return {
+        windowDays: days,
+        dates: [],
+        portfolio: [],
+        btc: [],
+        eth: [],
+        summary: {
+          cum: 0,
+          mean: 0,
+          stdev: 0,
+          sharpeDaily: 0,
+          maxDD: 0,
+          alphaBTC: 0,
+          betaBTC: 0,
+          alphaETH: 0,
+          betaETH: 0
+        },
+        warning: "price_data_unavailable"
+      };
+    }
+
+    const { dates, closes, benchmarks } = priceData;
+    console.log("GET_PORTFOLIO_PNL_DATA_PRICE_DATA", { 
+      userId, 
+      datesCount: dates.length, 
+      tokensWithData: Object.keys(closes).length,
+      hasBtc: benchmarks.btc.length > 0,
+      hasEth: benchmarks.eth.length > 0
+    });
+    
+    if (dates.length < 2) {
+      console.warn("GET_PORTFOLIO_PNL_DATA_INSUFFICIENT_DATA", { userId, datesCount: dates.length });
+      // Return empty data instead of throwing
+      return {
+        windowDays: days,
+        dates: [],
+        portfolio: [],
+        btc: [],
+        eth: [],
+        summary: {
+          cum: 0,
+          mean: 0,
+          stdev: 0,
+          sharpeDaily: 0,
+          maxDD: 0,
+          alphaBTC: 0,
+          betaBTC: 0,
+          alphaETH: 0,
+          betaETH: 0
+        },
+        warning: "insufficient_price_data"
+      };
+    }
 
   // Calculate daily returns for portfolio
   const portfolioReturns: number[] = [];
@@ -861,46 +975,120 @@ async function getPortfolioPnlData(userId: number, days: number) {
      betaETH: Number(betaETH.toFixed(4))
    };
 
-  return {
-    windowDays: days,
-    dates: dates.slice(1), // Skip first date since we need 2 points for returns
-    portfolio: portfolioReturns,
-    btc: btcReturns,
-    eth: ethReturns,
-    summary: summaryWithAlphaBeta
-  };
+    return {
+      windowDays: days,
+      dates: dates.slice(1), // Skip first date since we need 2 points for returns
+      portfolio: portfolioReturns,
+      btc: btcReturns,
+      eth: ethReturns,
+      summary: summaryWithAlphaBeta
+    };
+  } catch (error: any) {
+    console.error("GET_PORTFOLIO_PNL_DATA_ERROR", {
+      userId,
+      days,
+      message: error?.message,
+      stack: error?.stack,
+      name: error?.name,
+      code: error?.code,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Return empty data with error indication instead of throwing
+    return {
+      windowDays: days,
+      dates: [],
+      portfolio: [],
+      btc: [],
+      eth: [],
+      summary: {
+        cum: 0,
+        mean: 0,
+        stdev: 0,
+        sharpeDaily: 0,
+        maxDD: 0,
+        alphaBTC: 0,
+        betaBTC: 0,
+        alphaETH: 0,
+        betaETH: 0
+      },
+      error: "calculation_failed",
+      warning: error?.message || "Unknown error occurred"
+    };
+  }
 }
 
 // GET /ui/portfolio/pnl?days=30 - Portfolio performance vs benchmarks
 ui.get("/portfolio/pnl", async (req, res) => {
   try {
+    console.log("PORTFOLIO_PNL_START", { 
+      timestamp: new Date().toISOString(),
+      days: req.query.days 
+    });
+
     const days = Math.max(7, Math.min(365, Number(req.query.days || 30)));
     
     const key = (req as any).apiKey;
+    if (!key?.id) {
+      console.error("PORTFOLIO_PNL_ERROR", { error: "apiKey_missing", key });
+      return fail(res, 500, "api_key_missing");
+    }
+
     const k = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    if (!k?.user) return fail(res, 500, "demo_user_missing");
+    if (!k?.user) {
+      console.error("PORTFOLIO_PNL_ERROR", { error: "demo_user_missing", apiKeyId: key.id });
+      return fail(res, 500, "demo_user_missing");
+    }
+
+    console.log("PORTFOLIO_PNL_STEP1", { userId: k.user.id, days });
 
     // Check Redis cache first
     const r = getRedis();
     const cacheKey = `pnl:${k.user.id}:${days}`;
     if (r) {
-      const hit = await r.get(cacheKey);
-      if (hit) {
-        return res.json(JSON.parse(hit));
+      try {
+        const hit = await r.get(cacheKey);
+        if (hit) {
+          console.log("PORTFOLIO_PNL_CACHE_HIT", { userId: k.user.id, days });
+          return res.json(JSON.parse(hit));
+        }
+      } catch (cacheError) {
+        console.warn("PORTFOLIO_PNL_CACHE_ERROR", { error: cacheError, userId: k.user.id });
       }
     }
 
+    console.log("PORTFOLIO_PNL_STEP2", { userId: k.user.id, days });
+
     const result = await getPortfolioPnlData(k.user.id, days);
+
+    console.log("PORTFOLIO_PNL_STEP3", { 
+      userId: k.user.id, 
+      days,
+      resultDates: result.dates.length,
+      resultPortfolio: result.portfolio.length
+    });
 
     // Cache the result for 10 minutes
     if (r) {
-      await r.setex(cacheKey, 600, JSON.stringify(result));
+      try {
+        await r.setex(cacheKey, 600, JSON.stringify(result));
+        console.log("PORTFOLIO_PNL_CACHE_SET", { userId: k.user.id, days });
+      } catch (cacheError) {
+        console.warn("PORTFOLIO_PNL_CACHE_SET_ERROR", { error: cacheError, userId: k.user.id });
+      }
     }
 
     return ok(res, result);
 
-  } catch (error) {
-    console.error('Portfolio PnL error:', error);
+  } catch (error: any) {
+    console.error("PORTFOLIO_PNL_ERROR", {
+      message: error?.message,
+      stack: error?.stack,
+      cause: error?.cause,
+      name: error?.name,
+      code: error?.code,
+      timestamp: new Date().toISOString()
+    });
     return fail(res, 500, "portfolio_pnl_calculation_failed");
   }
 });

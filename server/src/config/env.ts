@@ -18,9 +18,25 @@ const EnvSchema = z.object({
 
   VITE_API_BASE: z.string().optional(),
   FRONTEND_ORIGIN: z.string().optional(),
+  
+  // Additional environment variables that might be needed for portfolio functionality
+  COINGECKO_KEY: z.string().optional(),
+  ALPHAVANTAGE_KEY: z.string().optional(),
+  SUPABASE_URL: z.string().optional(),
+  SUPABASE_ANON_KEY: z.string().optional(),
+  FRONTEND_ORIGINS: z.string().optional(),
 });
 
 export type AppEnv = z.infer<typeof EnvSchema>;
-export const env: AppEnv = EnvSchema.parse(process.env);
+
+// Parse with better error handling
+const envResult = EnvSchema.safeParse(process.env);
+if (!envResult.success) {
+  console.error("❌ Environment validation failed:");
+  console.error(JSON.stringify(envResult.error.flatten().fieldErrors, null, 2));
+  process.exit(1);
+}
+
+export const env: AppEnv = envResult.data;
 
 
