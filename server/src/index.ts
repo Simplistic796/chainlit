@@ -1,17 +1,5 @@
 // src/index.ts
 import "dotenv/config";
-
-// Global crash handlers - must be first
-process.on("uncaughtException", (err) => {
-  console.error("[fatal] uncaughtException:", err);
-  process.exit(1);
-});
-process.on("unhandledRejection", (reason) => {
-  console.error("[fatal] unhandledRejection:", reason);
-  process.exit(1);
-});
-
-import { env } from "./config/env";
 import express from "express";
 import type { Request, Response, NextFunction, ErrorRequestHandler } from "express";
 import cors from "cors";
@@ -22,7 +10,7 @@ import { z } from "zod";
 import { prisma } from "./db/prisma";
 import { analyzeToken } from "./lib/scoring/scoring";
 import { enqueueAnalyze, analyzeEvents } from "./jobs/queue";
-import { cacheGetJSON } from "./cache/redis";
+import { cacheGetJSON, getRedis } from "./cache/redis";
 import { enqueueDebate } from "./jobs/consensus/queue";
 import { logger } from "./observability/logger";
 import { initSentry } from "./observability/sentry";
@@ -36,27 +24,18 @@ import { scheduleAlertEvaluator } from "./jobs/alerts/evaluator";
 import swaggerUi from "swagger-ui-express";
 import { loadOpenApiV1 } from "./docs/openapi";
 import path from "path";
-import { APP_VERSION } from "./version";
-import { getRedis } from "./cache/redis";
-import { audit } from "./audit/log";
 
 const app = express();
-const port = env.PORT;
-
-// Boot banner
-console.log("[boot] starting server…", {
-  node: process.version,
-  env: env.NODE_ENV,
-});
+const port = Number(process.env.PORT || 3000);
 
 // Initialize Sentry + logging
 initSentry();
 
 // Debug environment variables
 console.log("Environment check:");
-console.log("DEMO_API_KEY:", env.DEMO_API_KEY ? "SET" : "NOT SET");
-console.log("NODE_ENV:", env.NODE_ENV);
-console.log("DATABASE_URL:", env.DATABASE_URL ? "SET" : "NOT SET");
+console.log("DEMO_API_KEY:", process.env.DEMO_API_KEY ? "SET" : "NOT SET");
+console.log("NODE_ENV:", process.env.NODE_ENV);
+console.log("DATABASE_URL:", process.env.DATABASE_URL ? "SET" : "NOT SET");
 
 // Sentry request/tracing handlers FIRST (only if Sentry is available)
 // TODO: Fix Sentry v10+ integration
@@ -88,37 +67,7 @@ app.use(
   })
 );
 
-// CORS: allow localhost and frontend origins from env
-const allowedOrigins = [
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-  "http://localhost:3000",
-].concat(env.FRONTEND_ORIGIN ? [env.FRONTEND_ORIGIN] : []);
-
-// Add FRONTEND_ORIGINS support (comma-separated list)
-if (env.FRONTEND_ORIGINS) {
-  const additionalOrigins = env.FRONTEND_ORIGINS
-    .split(",")
-    .map(s => s.trim())
-    .filter(Boolean);
-  allowedOrigins.push(...additionalOrigins);
-}
-
-console.log("CORS_ALLOWED_ORIGINS", { allowedOrigins });
-
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true); // non-browser or same-origin
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    console.warn("CORS_REJECTED_ORIGIN", { origin, allowedOrigins });
-    // Do not throw; reject CORS headers without breaking the route
-    return callback(null, false);
-  },
-  methods: ["GET","POST","PATCH","DELETE","OPTIONS"],
-  credentials: false,
-}));
-// Explicitly handle preflight for all routes
-app.options("*", cors());
+app.use(cors());
 app.use(helmet());
 app.set("trust proxy", 1);
 
@@ -134,7 +83,7 @@ app.use(apiLimiter);
 import { stripeWebhook } from "./api/stripeWebhook";
 app.post("/webhooks/stripe", bodyParser.raw({ type: "application/json" }), stripeWebhook);
 
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json());
 
 app.get("/health", (req: Request, res: Response) => {
   res.send("Server is running 🚀");
@@ -271,7 +220,7 @@ const v1 = express.Router();
 v1.use(apiAuth, logApiUsage);
 // --- Stripe checkout route (subscription) ---
 import Stripe from "stripe";
-const stripe = env.STRIPE_SECRET_KEY ? new Stripe(env.STRIPE_SECRET_KEY, { apiVersion: "2025-08-27.basil" }) : null;
+const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2025-08-27.basil" }) : null;
 
 v1.post("/checkout", async (req, res) => {
   if (!stripe) return fail(res, 500, "stripe_not_configured");
@@ -281,7 +230,7 @@ v1.post("/checkout", async (req, res) => {
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer_email: email,
-      line_items: [{ price: String(env.STRIPE_PRICE_ID || ""), quantity: 1 }],
+      line_items: [{ price: String(process.env.STRIPE_PRICE_ID || ""), quantity: 1 }],
       success_url: String(process.env.FRONTEND_SUCCESS_URL || "http://localhost:5173/success?session_id={CHECKOUT_SESSION_ID}"),
       cancel_url: String(process.env.FRONTEND_CANCEL_URL || "http://localhost:5173/cancel"),
     });
@@ -459,36 +408,6 @@ v1.get("/analytics/usage", async (req, res) => {
   }
 });
 
-// Ops metrics endpoint
-v1.get("/metrics/ops", async (_req, res) => {
-  const now = new Date();
-  let dbOk = true;
-  try { await prisma.$queryRaw`SELECT 1`; } catch { dbOk = false; }
-  let redisOk = true;
-  const r = getRedis();
-  try { if (r) await r.ping(); } catch { redisOk = false; }
-
-  const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const y = new Date(todayUTC.getTime() - 24*3600*1000);
-  const rows = await (prisma as any).apiUsageDaily.findMany({ where: { date: y } });
-  const sum = rows.reduce((a: any, r: any) => {
-    a.req += r.requests; a.ok += r.ok2xx;
-    if (typeof r.p95LatencyMs === "number") a.p95s.push(r.p95LatencyMs);
-    return a;
-  }, { req: 0, ok: 0, p95s: [] as number[] });
-
-  const okRate = sum.req ? sum.ok / sum.req : null;
-  const p95 = sum.p95s.length ? sum.p95s.sort((a: number,b: number)=>a-b)[Math.floor(0.95*(sum.p95s.length-1))] : null;
-
-  return ok(res, {
-    version: APP_VERSION,
-    env: env.NODE_ENV,
-    time: now.toISOString(),
-    dbOk, redisOk,
-    slo: { okRate, p95LatencyMs: p95 },
-  });
-});
-
 // WATCHLIST CRUD (per API key)
 v1.get("/watchlist", async (req, res) => {
   const key = (req as any).apiKey;
@@ -506,10 +425,6 @@ v1.post("/watchlist", async (req, res) => {
       update: {},
       create: { apiKeyId: key.id, token },
     });
-    try {
-      const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-      await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "watchlist.add", target: token });
-    } catch {}
     return ok(res, row);
   } catch { return fail(res, 500, "watchlist_upsert_failed"); }
 });
@@ -518,10 +433,6 @@ v1.delete("/watchlist/:token", async (req, res) => {
   const key = (req as any).apiKey;
   const token = String(req.params.token || "");
   await prisma.watchItem.deleteMany({ where: { apiKeyId: key.id, token } });
-  try {
-    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "watchlist.remove", target: token });
-  } catch {}
   return ok(res, { removed: token });
 });
 
@@ -541,10 +452,6 @@ v1.post("/alerts", async (req, res) => {
   const target = String(req.body?.target || "");
   if (!token || !type || !target) return fail(res, 400, "token_type_target_required");
   const row = await prisma.alert.create({ data: { apiKeyId: key.id, token, type, condition, channel, target } });
-  try {
-    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.create", target: token, meta: { type, targetUrl: target } });
-  } catch {}
   return ok(res, row);
 });
 
@@ -554,10 +461,6 @@ v1.patch("/alerts/:id/toggle", async (req, res) => {
   const a = await prisma.alert.findFirst({ where: { id, apiKeyId: key.id } });
   if (!a) return fail(res, 404, "alert_not_found");
   const row = await prisma.alert.update({ where: { id }, data: { isActive: !a.isActive } });
-  try {
-    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.toggle", target: String(id), meta: { active: row.isActive } });
-  } catch {}
   return ok(res, row);
 });
 
@@ -565,10 +468,6 @@ v1.delete("/alerts/:id", async (req, res) => {
   const key = (req as any).apiKey;
   const id = Number(req.params.id);
   await prisma.alert.deleteMany({ where: { id, apiKeyId: key.id } });
-  try {
-    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.delete", target: String(id) });
-  } catch {}
   return ok(res, { removed: id });
 });
 
@@ -604,21 +503,6 @@ ui.get("/watchlist", async (req, res) => {
   const rows = await prisma.watchItem.findMany({ where: { apiKeyId: key.id }, orderBy: { createdAt: "desc" } });
   return ok(res, rows);
 });
-// Minimal audit logs viewer
-ui.get("/audit", async (req, res) => {
-  const key = (req as any).apiKey;
-  const k = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-  if (!k?.user) return res.status(500).json({ ok:false, error:"demo_user_missing" });
-  const days = Number((req.query as any).days || 30);
-  const since = new Date(Date.now() - days * 24 * 3600 * 1000);
-  const rows = await (prisma as any).auditLog.findMany({
-    where: { userId: k.user.id, createdAt: { gte: since } },
-    orderBy: { createdAt: "desc" },
-    take: 200,
-  });
-  return ok(res, rows);
-});
-
 
 ui.post("/watchlist", async (req, res) => {
   const key = (req as any).apiKey;
@@ -629,10 +513,6 @@ ui.post("/watchlist", async (req, res) => {
     update: {},
     create: { apiKeyId: key.id, token },
   });
-  try {
-    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "watchlist.add", target: token });
-  } catch {}
   return ok(res, row);
 });
 
@@ -640,10 +520,6 @@ ui.delete("/watchlist/:token", async (req, res) => {
   const key = (req as any).apiKey;
   const token = String(req.params.token || "");
   await prisma.watchItem.deleteMany({ where: { apiKeyId: key.id, token } });
-  try {
-    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "watchlist.remove", target: token });
-  } catch {}
   return ok(res, { removed: token });
 });
 
@@ -663,10 +539,6 @@ ui.post("/alerts", async (req, res) => {
   const target = String(req.body?.target || "");
   if (!token || !type || !target) return fail(res, 400, "token_type_target_required");
   const row = await prisma.alert.create({ data: { apiKeyId: key.id, token, type, condition, channel, target } });
-  try {
-    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.create", target: token, meta: { type, targetUrl: target } });
-  } catch {}
   return ok(res, row);
 });
 
@@ -676,10 +548,6 @@ ui.patch("/alerts/:id/toggle", async (req, res) => {
   const a = await prisma.alert.findFirst({ where: { id, apiKeyId: key.id } });
   if (!a) return fail(res, 404, "alert_not_found");
   const row = await prisma.alert.update({ where: { id }, data: { isActive: !a.isActive } });
-  try {
-    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.toggle", target: String(id), meta: { active: row.isActive } });
-  } catch {}
   return ok(res, row);
 });
 
@@ -687,72 +555,22 @@ ui.delete("/alerts/:id", async (req, res) => {
   const key = (req as any).apiKey;
   const id = Number(req.params.id);
   await prisma.alert.deleteMany({ where: { id, apiKeyId: key.id } });
-  try {
-    const fullKey = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    await audit({ userId: fullKey?.user?.id || undefined, apiKeyId: key.id, action: "alert.delete", target: String(id) });
-  } catch {}
   return ok(res, { removed: id });
 });
 
 // --- Portfolio endpoints ---
 // Get or create demo user's single portfolio
 ui.get("/portfolio", async (req, res) => {
-  try {
-    console.log("PORTFOLIO_ROUTE_START", { 
-      timestamp: new Date().toISOString(),
-      apiKeyId: (req as any).apiKey?.id 
-    });
+  const key = (req as any).apiKey;
+  const k = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
+  if (!k?.user) return fail(res, 500, "demo_user_missing");
 
-    const key = (req as any).apiKey;
-    if (!key?.id) {
-      console.error("PORTFOLIO_ROUTE_ERROR", { error: "apiKey_missing", key });
-      return fail(res, 500, "api_key_missing");
-    }
-
-    console.log("PORTFOLIO_ROUTE_STEP1", { apiKeyId: key.id });
-    
-    const k = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    if (!k?.user) {
-      console.error("PORTFOLIO_ROUTE_ERROR", { error: "demo_user_missing", apiKeyId: key.id, keyData: k });
-      return fail(res, 500, "demo_user_missing");
-    }
-
-    console.log("PORTFOLIO_ROUTE_STEP2", { userId: k.user.id });
-
-    let p = await prisma.portfolio.findFirst({ where: { userId: k.user.id } });
-    if (!p) {
-      console.log("PORTFOLIO_ROUTE_STEP3", { action: "creating_portfolio", userId: k.user.id });
-      p = await prisma.portfolio.create({ data: { userId: k.user.id, name: "My Portfolio" } });
-    }
-
-    console.log("PORTFOLIO_ROUTE_STEP4", { portfolioId: p.id });
-
-    const holdings = await prisma.holding.findMany({ where: { portfolioId: p.id }, orderBy: { token: "asc" } });
-    
-    console.log("PORTFOLIO_ROUTE_SUCCESS", { 
-      portfolioId: p.id, 
-      holdingsCount: holdings.length,
-      holdings: holdings.map(h => ({ token: h.token, weight: h.weight }))
-    });
-
-    return ok(res, { portfolio: p, holdings });
-  } catch (err: any) {
-    // Log *everything* useful:
-    console.error("PORTFOLIO_ROUTE_ERROR", {
-      message: err?.message,
-      stack: err?.stack,
-      cause: err?.cause,
-      responseStatus: err?.response?.status,
-      responseData: err?.response?.data,
-      name: err?.name,
-      code: err?.code,
-      timestamp: new Date().toISOString()
-    });
-    return res.status(500).json({
-      error: "PORTFOLIO_ROUTE_ERROR",
-      message: err?.message ?? "Unknown error",
-    });
+  let p = await prisma.portfolio.findFirst({ where: { userId: k.user.id } });
+  if (!p) {
+    p = await prisma.portfolio.create({ data: { userId: k.user.id, name: "My Portfolio" } });
   }
+  const holdings = await prisma.holding.findMany({ where: { portfolioId: p.id }, orderBy: { token: "asc" } });
+  return ok(res, { portfolio: p, holdings });
 });
 
 // Helper function to calculate portfolio metrics
@@ -801,107 +619,51 @@ function calculatePortfolioMetrics(returns: number[]) {
 
 // Shared function to calculate portfolio PnL data
 async function getPortfolioPnlData(userId: number, days: number) {
-  try {
-    console.log("GET_PORTFOLIO_PNL_DATA_START", { userId, days });
+  // Get user's portfolio and holdings
+  let portfolio = await prisma.portfolio.findFirst({ where: { userId } });
+  if (!portfolio) {
+    portfolio = await prisma.portfolio.create({ data: { userId, name: "My Portfolio" } });
+  }
+  
+  const holdings = await prisma.holding.findMany({ where: { portfolioId: portfolio.id } });
+  
+  if (holdings.length === 0) {
+    return {
+      windowDays: days,
+      dates: [],
+      portfolio: [],
+      btc: [],
+      eth: [],
+      summary: {
+        cum: 0,
+        mean: 0,
+        stdev: 0,
+        sharpeDaily: 0,
+        maxDD: 0,
+        alphaBTC: 0,
+        betaBTC: 0,
+        alphaETH: 0,
+        betaETH: 0
+      }
+    };
+  }
 
-    // Get user's portfolio and holdings
-    let portfolio = await prisma.portfolio.findFirst({ where: { userId } });
-    if (!portfolio) {
-      console.log("GET_PORTFOLIO_PNL_DATA_CREATE_PORTFOLIO", { userId });
-      portfolio = await prisma.portfolio.create({ data: { userId, name: "My Portfolio" } });
-    }
-    
-    const holdings = await prisma.holding.findMany({ where: { portfolioId: portfolio.id } });
-    console.log("GET_PORTFOLIO_PNL_DATA_HOLDINGS", { userId, holdingsCount: holdings.length, holdings: holdings.map(h => ({ token: h.token, weight: h.weight })) });
-    
-    if (holdings.length === 0) {
-      console.log("GET_PORTFOLIO_PNL_DATA_EMPTY_HOLDINGS", { userId });
-      return {
-        windowDays: days,
-        dates: [],
-        portfolio: [],
-        btc: [],
-        eth: [],
-        summary: {
-          cum: 0,
-          mean: 0,
-          stdev: 0,
-          sharpeDaily: 0,
-          maxDD: 0,
-          alphaBTC: 0,
-          betaBTC: 0,
-          alphaETH: 0,
-          betaETH: 0
-        }
-      };
-    }
+  // Get tokens from holdings
+  const tokens = holdings.map(h => h.token);
+  
+  // Import and use the price history provider
+  const { getPriceHistory } = await import("./providers/prices/history");
+  const priceData = await getPriceHistory({ tokens, days });
+  
+  if (!priceData) {
+    throw new Error("failed_to_fetch_price_data");
+  }
 
-    // Get tokens from holdings
-    const tokens = holdings.map(h => h.token);
-    console.log("GET_PORTFOLIO_PNL_DATA_TOKENS", { userId, tokens });
-    
-    // Import and use the price history provider
-    const { getPriceHistory } = await import("./providers/prices/history");
-    console.log("GET_PORTFOLIO_PNL_DATA_FETCH_PRICES", { userId, tokens, days });
-    
-    const priceData = await getPriceHistory({ tokens, days });
-    
-    if (!priceData) {
-      console.error("GET_PORTFOLIO_PNL_DATA_NO_PRICE_DATA", { userId, tokens, days });
-      // Return empty data instead of throwing
-      return {
-        windowDays: days,
-        dates: [],
-        portfolio: [],
-        btc: [],
-        eth: [],
-        summary: {
-          cum: 0,
-          mean: 0,
-          stdev: 0,
-          sharpeDaily: 0,
-          maxDD: 0,
-          alphaBTC: 0,
-          betaBTC: 0,
-          alphaETH: 0,
-          betaETH: 0
-        },
-        warning: "price_data_unavailable"
-      };
-    }
-
-    const { dates, closes, benchmarks } = priceData;
-    console.log("GET_PORTFOLIO_PNL_DATA_PRICE_DATA", { 
-      userId, 
-      datesCount: dates.length, 
-      tokensWithData: Object.keys(closes).length,
-      hasBtc: benchmarks.btc.length > 0,
-      hasEth: benchmarks.eth.length > 0
-    });
-    
-    if (dates.length < 2) {
-      console.warn("GET_PORTFOLIO_PNL_DATA_INSUFFICIENT_DATA", { userId, datesCount: dates.length });
-      // Return empty data instead of throwing
-      return {
-        windowDays: days,
-        dates: [],
-        portfolio: [],
-        btc: [],
-        eth: [],
-        summary: {
-          cum: 0,
-          mean: 0,
-          stdev: 0,
-          sharpeDaily: 0,
-          maxDD: 0,
-          alphaBTC: 0,
-          betaBTC: 0,
-          alphaETH: 0,
-          betaETH: 0
-        },
-        warning: "insufficient_price_data"
-      };
-    }
+  const { dates, closes, benchmarks } = priceData;
+  
+  if (dates.length < 2) {
+    throw new Error("insufficient_price_data");
+  }
 
   // Calculate daily returns for portfolio
   const portfolioReturns: number[] = [];
@@ -975,120 +737,46 @@ async function getPortfolioPnlData(userId: number, days: number) {
      betaETH: Number(betaETH.toFixed(4))
    };
 
-    return {
-      windowDays: days,
-      dates: dates.slice(1), // Skip first date since we need 2 points for returns
-      portfolio: portfolioReturns,
-      btc: btcReturns,
-      eth: ethReturns,
-      summary: summaryWithAlphaBeta
-    };
-  } catch (error: any) {
-    console.error("GET_PORTFOLIO_PNL_DATA_ERROR", {
-      userId,
-      days,
-      message: error?.message,
-      stack: error?.stack,
-      name: error?.name,
-      code: error?.code,
-      timestamp: new Date().toISOString()
-    });
-    
-    // Return empty data with error indication instead of throwing
-    return {
-      windowDays: days,
-      dates: [],
-      portfolio: [],
-      btc: [],
-      eth: [],
-      summary: {
-        cum: 0,
-        mean: 0,
-        stdev: 0,
-        sharpeDaily: 0,
-        maxDD: 0,
-        alphaBTC: 0,
-        betaBTC: 0,
-        alphaETH: 0,
-        betaETH: 0
-      },
-      error: "calculation_failed",
-      warning: error?.message || "Unknown error occurred"
-    };
-  }
+  return {
+    windowDays: days,
+    dates: dates.slice(1), // Skip first date since we need 2 points for returns
+    portfolio: portfolioReturns,
+    btc: btcReturns,
+    eth: ethReturns,
+    summary: summaryWithAlphaBeta
+  };
 }
 
 // GET /ui/portfolio/pnl?days=30 - Portfolio performance vs benchmarks
 ui.get("/portfolio/pnl", async (req, res) => {
   try {
-    console.log("PORTFOLIO_PNL_START", { 
-      timestamp: new Date().toISOString(),
-      days: req.query.days 
-    });
-
     const days = Math.max(7, Math.min(365, Number(req.query.days || 30)));
     
     const key = (req as any).apiKey;
-    if (!key?.id) {
-      console.error("PORTFOLIO_PNL_ERROR", { error: "apiKey_missing", key });
-      return fail(res, 500, "api_key_missing");
-    }
-
     const k = await prisma.apiKey.findUnique({ where: { id: key.id }, include: { user: true } });
-    if (!k?.user) {
-      console.error("PORTFOLIO_PNL_ERROR", { error: "demo_user_missing", apiKeyId: key.id });
-      return fail(res, 500, "demo_user_missing");
-    }
-
-    console.log("PORTFOLIO_PNL_STEP1", { userId: k.user.id, days });
+    if (!k?.user) return fail(res, 500, "demo_user_missing");
 
     // Check Redis cache first
     const r = getRedis();
     const cacheKey = `pnl:${k.user.id}:${days}`;
     if (r) {
-      try {
-        const hit = await r.get(cacheKey);
-        if (hit) {
-          console.log("PORTFOLIO_PNL_CACHE_HIT", { userId: k.user.id, days });
-          return res.json(JSON.parse(hit));
-        }
-      } catch (cacheError) {
-        console.warn("PORTFOLIO_PNL_CACHE_ERROR", { error: cacheError, userId: k.user.id });
+      const hit = await r.get(cacheKey);
+      if (hit) {
+        return res.json(JSON.parse(hit));
       }
     }
 
-    console.log("PORTFOLIO_PNL_STEP2", { userId: k.user.id, days });
-
     const result = await getPortfolioPnlData(k.user.id, days);
-
-    console.log("PORTFOLIO_PNL_STEP3", { 
-      userId: k.user.id, 
-      days,
-      resultDates: result.dates.length,
-      resultPortfolio: result.portfolio.length
-    });
 
     // Cache the result for 10 minutes
     if (r) {
-      try {
-        await r.setex(cacheKey, 600, JSON.stringify(result));
-        console.log("PORTFOLIO_PNL_CACHE_SET", { userId: k.user.id, days });
-      } catch (cacheError) {
-        console.warn("PORTFOLIO_PNL_CACHE_SET_ERROR", { error: cacheError, userId: k.user.id });
-      }
+      await r.setex(cacheKey, 600, JSON.stringify(result));
     }
 
     return ok(res, result);
 
-  } catch (error: any) {
-    console.error("PORTFOLIO_PNL_ERROR", {
-      message: error?.message,
-      stack: error?.stack,
-      cause: error?.cause,
-      name: error?.name,
-      code: error?.code,
-      timestamp: new Date().toISOString()
-    });
+  } catch (error) {
+    console.error('Portfolio PnL error:', error);
     return fail(res, 500, "portfolio_pnl_calculation_failed");
   }
 });
@@ -1244,8 +932,7 @@ app.use("/v1", v1);
 // Final error handler
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   logger.error({ err }, "unhandled error");
-  const message = (err && typeof err === "object" && "message" in err) ? (err as any).message : "Internal Server Error";
-  res.status(500).json({ error: "internal_error", message });
+  res.status(500).json({ error: "internal_error" });
  });
 
 // Process-level guards
