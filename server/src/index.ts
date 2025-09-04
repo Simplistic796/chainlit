@@ -92,17 +92,21 @@ app.use(
 const allowedOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
+  "http://localhost:3000",
 ].concat(env.FRONTEND_ORIGIN ? [env.FRONTEND_ORIGIN] : []);
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
+    if (!origin) return callback(null, true); // non-browser or same-origin
     if (allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error("Not allowed by CORS"));
+    // Do not throw; reject CORS headers without breaking the route
+    return callback(null, false);
   },
   methods: ["GET","POST","PATCH","DELETE","OPTIONS"],
   credentials: false,
 }));
+// Explicitly handle preflight for all routes
+app.options("*", cors());
 app.use(helmet());
 app.set("trust proxy", 1);
 
@@ -118,7 +122,7 @@ app.use(apiLimiter);
 import { stripeWebhook } from "./api/stripeWebhook";
 app.post("/webhooks/stripe", bodyParser.raw({ type: "application/json" }), stripeWebhook);
 
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 
 app.get("/health", (req: Request, res: Response) => {
   res.send("Server is running 🚀");
@@ -1052,7 +1056,8 @@ app.use("/v1", v1);
 // Final error handler
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   logger.error({ err }, "unhandled error");
-  res.status(500).json({ error: "internal_error" });
+  const message = (err && typeof err === "object" && "message" in err) ? (err as any).message : "Internal Server Error";
+  res.status(500).json({ error: "internal_error", message });
  });
 
 // Process-level guards

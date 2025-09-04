@@ -110,7 +110,26 @@ app.use((0, pino_http_1.default)({
     logger: logger_1.logger,
     customProps: (req) => ({ reqId: req.id }),
 }));
-app.use((0, cors_1.default)());
+// CORS: allow localhost and an optional frontend origin from env
+const allowedOrigins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+].concat(env_1.env.FRONTEND_ORIGIN ? [env_1.env.FRONTEND_ORIGIN] : []);
+app.use((0, cors_1.default)({
+    origin: (origin, callback) => {
+        if (!origin)
+            return callback(null, true); // non-browser or same-origin
+        if (allowedOrigins.includes(origin))
+            return callback(null, true);
+        // Do not throw; reject CORS headers without breaking the route
+        return callback(null, false);
+    },
+    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    credentials: false,
+}));
+// Explicitly handle preflight for all routes
+app.options("*", (0, cors_1.default)());
 app.use((0, helmet_1.default)());
 app.set("trust proxy", 1);
 const apiLimiter = (0, express_rate_limit_1.default)({
@@ -123,7 +142,7 @@ app.use(apiLimiter);
 // Stripe webhook MUST receive the raw body. Mount BEFORE express.json.
 const stripeWebhook_1 = require("./api/stripeWebhook");
 app.post("/webhooks/stripe", body_parser_1.default.raw({ type: "application/json" }), stripeWebhook_1.stripeWebhook);
-app.use(express_1.default.json());
+app.use(express_1.default.json({ limit: "10mb" }));
 app.get("/health", (req, res) => {
     res.send("Server is running 🚀");
 });
@@ -1007,7 +1026,8 @@ app.use("/v1", v1);
 // Final error handler
 app.use((err, _req, res, _next) => {
     logger_1.logger.error({ err }, "unhandled error");
-    res.status(500).json({ error: "internal_error" });
+    const message = (err && typeof err === "object" && "message" in err) ? err.message : "Internal Server Error";
+    res.status(500).json({ error: "internal_error", message });
 });
 // Process-level guards
 process.on("unhandledRejection", (reason) => logger_1.logger.error({ reason }, "unhandledRejection"));
