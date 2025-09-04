@@ -88,7 +88,21 @@ app.use(
   })
 );
 
-app.use(cors());
+// CORS: allow localhost and an optional frontend origin from env
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+].concat(env.FRONTEND_ORIGIN ? [env.FRONTEND_ORIGIN] : []);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("Not allowed by CORS"));
+  },
+  methods: ["GET","POST","PATCH","DELETE","OPTIONS"],
+  credentials: false,
+}));
 app.use(helmet());
 app.set("trust proxy", 1);
 

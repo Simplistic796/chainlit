@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-const API_BASE = import.meta.env.VITE_API_BASE;
+const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:3000";
 
 type PortfolioPnLData = {
   windowDays: number;
@@ -76,10 +76,12 @@ export default function PortfolioPerformance() {
     try {
       setLoading(true);
       setError(null);
-      const response = await axios.get<{ ok: boolean; data: PortfolioPnLData }>(`${API_BASE}/ui/portfolio/pnl`, {
+      const response = await axios.get<{ ok: boolean; data: PortfolioPnLData } | PortfolioPnLData>(`${API_BASE}/ui/portfolio/pnl`, {
         params: { days }
       });
-      setData(response.data?.data || null);
+      const payload: any = (response as any).data;
+      const parsed = payload?.data ?? payload;
+      setData(parsed ?? null);
     } catch (error) {
       console.error('Failed to load portfolio performance:', error);
       setError('Failed to load performance data');

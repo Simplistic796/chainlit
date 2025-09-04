@@ -17,6 +17,7 @@ const EnvSchema = z.object({
   SENTRY_DSN: z.string().optional(),
 
   VITE_API_BASE: z.string().optional(),
+  FRONTEND_ORIGIN: z.string().optional(),
 });
 
 export type AppEnv = z.infer<typeof EnvSchema>;

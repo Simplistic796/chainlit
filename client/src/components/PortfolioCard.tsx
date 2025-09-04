@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
-const API_BASE = import.meta.env.VITE_API_BASE;
+const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:3000";
 
 type Holding = { id: number; token: string; weight: number };
 
@@ -15,19 +15,27 @@ export default function PortfolioCard() {
   const [weight, setWeight] = useState("0.10"); // default 10%
 
   async function load() {
-    const r = await axios.get<{ ok: boolean; data: { portfolio: any; holdings: Holding[] } }>(`${API_BASE}/ui/portfolio`);
-    setHoldings(r.data?.data?.holdings || []);
+    try {
+      const r = await axios.get<{ ok: boolean; data: { portfolio: any; holdings: Holding[] } }>(`${API_BASE}/ui/portfolio`);
+      setHoldings(Array.isArray(r.data?.data?.holdings) ? r.data.data.holdings : []);
+    } catch {
+      setHoldings([]);
+    }
   }
   async function save() {
     if (!token.trim()) return;
     const w = Number(weight);
     if (!Number.isFinite(w) || w < 0 || w > 1) return alert("Weight must be between 0 and 1");
-    await axios.post(`${API_BASE}/ui/portfolio/holdings`, { token: token.trim().toUpperCase(), weight: w });
-    setToken("");
-    await load();
+    try {
+      await axios.post(`${API_BASE}/ui/portfolio/holdings`, { token: token.trim().toUpperCase(), weight: w });
+      setToken("");
+      await load();
+    } catch {}
   }
   async function remove(t: string) {
-    await axios.delete(`${API_BASE}/ui/portfolio/holdings/${encodeURIComponent(t)}`);
+    try {
+      await axios.delete(`${API_BASE}/ui/portfolio/holdings/${encodeURIComponent(t)}`);
+    } catch {}
     await load();
   }
 

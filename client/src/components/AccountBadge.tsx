@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 
-const API_BASE = import.meta.env.VITE_API_BASE;
+const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:3000";
 
 export default function AccountBadge() {
   const [plan, setPlan] = useState<string>("…");
 
   useEffect(() => {
     axios.get(`${API_BASE}/ui/account`).then((r: any) => {
-      setPlan(r.data?.data?.plan || "free");
+      setPlan(r?.data?.data?.plan ?? "free");
     }).catch(() => setPlan("free"));
   }, []);
 

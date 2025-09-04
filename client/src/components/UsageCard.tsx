@@ -27,10 +27,13 @@ export default function UsageCard() {
   const fetchUsageData = async (selectedDays: number) => {
     try {
       setLoading(true);
-      const response = await axios.get<UsageData[]>(`${API_BASE}/ui/analytics/usage`, {
+      const response = await axios.get<UsageData[] | { ok: boolean; data: UsageData[] }>(`${API_BASE}/ui/analytics/usage`, {
         params: { days: selectedDays }
       });
-      setUsageData(response.data);
+      const data = Array.isArray((response as any).data)
+        ? (response as any).data
+        : ((response as any).data?.data ?? []);
+      setUsageData(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error("Failed to fetch usage data:", error);
       setUsageData([]);
